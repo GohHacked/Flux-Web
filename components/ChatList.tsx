@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../firebase';
-import { ref, onValue, query, orderByChild, equalTo, get } from 'firebase/database';
+import { ref, onValue, get } from 'firebase/database';
 import { UserProfile, ChatSession, Theme } from '../types';
 import { Search, MessageSquare } from 'lucide-react';
 
@@ -63,24 +63,36 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
 
   const handleSearch = async (term: string) => {
     setSearchTerm(term);
-    if (term.length > 1) {
+    
+    // Удаляем @ в начале и пробелы
+    const cleanTerm = term.trim().replace(/^@/, '').toLowerCase();
+
+    if (cleanTerm.length > 0) {
       setIsSearching(true);
-      const cleanTerm = term.replace('@', '').toLowerCase();
       const usersRef = ref(db, 'users');
-      const q = query(usersRef, orderByChild('username'), equalTo(cleanTerm));
+      
       try {
-        const snapshot = await get(q);
+        // Используем client-side filtering чтобы избежать ошибки "Index not defined"
+        // если правила базы данных не настроены вручную.
+        const snapshot = await get(usersRef);
+        
         if (snapshot.exists()) {
           const results: UserProfile[] = [];
           snapshot.forEach((child) => {
              const u = child.val();
-             if (u.uid !== currentUser?.uid) results.push(u);
+             // Не показываем самого себя в поиске и проверяем совпадение по началу строки
+             if (u.uid !== currentUser?.uid && u.username && u.username.startsWith(cleanTerm)) {
+                 results.push(u);
+             }
           });
           setSearchResults(results);
         } else {
           setSearchResults([]);
         }
-      } catch (e) { console.error(e); }
+      } catch (e) { 
+        console.error(e); 
+        setSearchResults([]);
+      }
     } else {
       setIsSearching(false);
       setSearchResults([]);
@@ -121,7 +133,7 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
                    onClick={() => onSelectChat(user)}
                    className={`flex items-center gap-4 ${cardBg} p-4 rounded-2xl shadow-sm cursor-pointer hover:shadow-md transition active:scale-[0.98]`}
                  >
-                    <img src={user.photoURL} alt={user.username} className="w-12 h-12 rounded-full bg-gray-200" />
+                    <img src={user.photoURL} alt={user.username} className="w-12 h-12 rounded-full bg-gray-200 object-cover" />
                     <div>
                       <p className={`font-bold ${textPrimary}`}>{user.displayName}</p>
                       <p className={`${accentText} text-sm`}>@{user.username}</p>

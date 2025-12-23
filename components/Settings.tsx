@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../firebase';
 import { updateProfile } from 'firebase/auth';
 import { ref, update, get, set, remove, child } from 'firebase/database';
-import { LogOut, Edit2, Moon, Sun, Snowflake, Palette, ArrowLeft, ChevronRight } from 'lucide-react';
+import { LogOut, Edit2, Moon, Sun, Snowflake, Palette, ArrowLeft, ChevronRight, Info, Camera, Upload } from 'lucide-react';
 import { UserProfile, Theme } from '../types';
 
 interface SettingsProps {
@@ -18,12 +18,14 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
   const [displayName, setDisplayName] = useState(auth.currentUser?.displayName || '');
   const [username, setUsername] = useState(''); 
   const [newUsername, setNewUsername] = useState(''); 
+  const [bio, setBio] = useState('');
   const [photoURL, setPhotoURL] = useState(auth.currentUser?.photoURL || '');
   
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const currentUser = auth.currentUser;
 
   // Theme Styles
@@ -48,6 +50,7 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
            setNewUsername(data.username);
            setDisplayName(data.displayName);
            setPhotoURL(data.photoURL);
+           setBio(data.bio || '');
          }
       };
       fetchUserData();
@@ -86,6 +89,7 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
 
       updates[`users/${currentUser.uid}/displayName`] = displayName;
       updates[`users/${currentUser.uid}/photoURL`] = photoURL;
+      updates[`users/${currentUser.uid}/bio`] = bio;
 
       await update(ref(db), updates);
 
@@ -114,6 +118,25 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
     setPhotoURL(`https://api.dicebear.com/7.x/avataaars/svg?seed=${seed}`);
   };
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      setError('Файл слишком большой (макс 2МБ)');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+        if (ev.target?.result) {
+            setPhotoURL(ev.target.result as string);
+        }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = ''; // Reset input
+  };
+
   // RENDER: Profile Editor
   if (activeSection === 'profile') {
     return (
@@ -129,18 +152,44 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
         </div>
         
         <div className="flex flex-col items-center mb-8">
-           <img src={photoURL} alt="Avatar" className={`w-24 h-24 rounded-full shadow-md mb-4 ${bgCard}`} />
-           <button 
-             onClick={generateNewAvatar}
-             className={`text-sm font-medium px-4 py-2 rounded-full transition ${accentLight}`}
-           >
-             Сгенерировать новую аватарку
-           </button>
+           <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
+             <img src={photoURL} alt="Avatar" className={`w-28 h-28 rounded-full shadow-md object-cover ${bgCard}`} />
+             <div className="absolute inset-0 bg-black/30 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                <Camera className="text-white" size={32} />
+             </div>
+             <div className="absolute bottom-0 right-0 p-2 bg-blue-500 rounded-full border-2 border-white dark:border-gray-900 text-white shadow-sm">
+                <Camera size={16} />
+             </div>
+           </div>
+
+           <div className="flex gap-2 mt-4">
+              <button 
+                onClick={() => fileInputRef.current?.click()}
+                className={`text-sm font-medium px-4 py-2 rounded-full transition flex items-center gap-2 ${isDark ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-white text-gray-800 hover:bg-gray-100 shadow-sm'}`}
+              >
+                <Upload size={14} />
+                Загрузить фото
+              </button>
+              <button 
+                onClick={generateNewAvatar}
+                className={`text-sm font-medium px-4 py-2 rounded-full transition ${accentLight}`}
+              >
+                Сгенерировать
+              </button>
+           </div>
+           
+           <input 
+             type="file" 
+             ref={fileInputRef} 
+             onChange={handleFileChange} 
+             className="hidden" 
+             accept="image/*" 
+           />
         </div>
 
-        <div className="space-y-4">
+        <div className="space-y-6">
           <div>
-            <label className={`text-sm font-bold ml-1 ${textSecondary}`}>Никнейм</label>
+            <label className={`text-sm font-bold ml-1 mb-1 block ${textSecondary}`}>Имя</label>
             <input
               type="text"
               value={displayName}
@@ -148,9 +197,21 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
               className={`w-full p-4 rounded-xl outline-none focus:ring-2 focus:ring-opacity-50 transition ${inputBg} ${isDark ? 'focus:ring-purple-500' : 'focus:ring-blue-500'}`}
             />
           </div>
+
+          <div>
+            <label className={`text-sm font-bold ml-1 mb-1 block ${textSecondary}`}>О себе</label>
+            <textarea
+              value={bio}
+              onChange={(e) => setBio(e.target.value)}
+              placeholder="Немного о себе..."
+              rows={3}
+              className={`w-full p-4 rounded-xl outline-none focus:ring-2 focus:ring-opacity-50 transition resize-none ${inputBg} ${isDark ? 'focus:ring-purple-500' : 'focus:ring-blue-500'}`}
+            />
+            <p className={`text-xs mt-1 ml-1 ${textSecondary}`}>Любые подробности, например: возраст, род занятий или город.</p>
+          </div>
           
           <div>
-             <label className={`text-sm font-bold ml-1 ${textSecondary}`}>Юзернейм</label>
+             <label className={`text-sm font-bold ml-1 mb-1 block ${textSecondary}`}>Имя пользователя</label>
              <div className="relative">
                 <span className={`absolute left-4 top-4 ${textSecondary}`}>@</span>
                 <input
@@ -160,7 +221,7 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
                   className={`w-full pl-8 p-4 rounded-xl outline-none focus:ring-2 focus:ring-opacity-50 transition ${inputBg} ${isDark ? 'focus:ring-purple-500' : 'focus:ring-blue-500'}`}
                 />
              </div>
-             <p className={`text-xs mt-1 ml-1 ${textSecondary}`}>Можно изменить.</p>
+             <p className={`text-xs mt-1 ml-1 ${textSecondary}`}>По этому имени вас смогут найти другие люди.</p>
           </div>
         </div>
 
@@ -272,7 +333,7 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
            </div>
            <div className="flex-1">
              <span className={`text-base font-bold block ${textPrimary}`}>Редактор профиля</span>
-             <span className={`text-xs ${textSecondary}`}>Имя, фото, юзернейм</span>
+             <span className={`text-xs ${textSecondary}`}>Имя, описание, юзернейм</span>
            </div>
            <ChevronRight className={`${textSecondary} opacity-50`} size={20} />
          </button>

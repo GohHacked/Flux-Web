@@ -4,6 +4,12 @@ export interface UserProfile {
   username: string;
   displayName: string; // Nickname
   photoURL: string;
+  bio?: string; // Description/About info
+}
+
+export interface UserStatus {
+  state: 'online' | 'offline';
+  last_changed: number;
 }
 
 export interface Message {
@@ -11,6 +17,7 @@ export interface Message {
   senderId: string;
   text: string;
   timestamp: number;
+  reactions?: Record<string, string>; // UID -> Emoji char
 }
 
 export interface ChatSession {

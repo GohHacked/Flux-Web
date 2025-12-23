@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db, auth } from '../firebase';
 import { ref, push, onValue, set, update, remove, serverTimestamp } from 'firebase/database';
 import { UserProfile, Message, Theme, UserStatus } from '../types';
-import { ArrowLeft, Send, Smile, X, Paperclip, Image as ImageIcon, Video, Music, FileText, Sticker as StickerIcon, Gift, Check, CheckCheck, Loader2, AlertCircle, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Send, Smile, X, Paperclip, Image as ImageIcon, Video, Music, FileText, Sticker as StickerIcon, Gift, Check, CheckCheck, Loader2, AlertCircle, ExternalLink, RefreshCw } from 'lucide-react';
 
 interface ChatRoomProps {
   recipient: UserProfile;
@@ -55,6 +55,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processProgress, setProcessProgress] = useState(0);
   const [processStatus, setProcessStatus] = useState('Обработка...');
+  const [uploadError, setUploadError] = useState('');
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -204,7 +205,17 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
     }
   };
 
-  // Base64 Compression for Images (Instant, Permanent)
+  // Base64 for Small Files
+  const convertToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = error => reject(error);
+        reader.readAsDataURL(file);
+    });
+  };
+
+  // Image Compression
   const compressImage = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -216,9 +227,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
           const canvas = document.createElement('canvas');
           let width = img.width;
           let height = img.height;
-          
-          // Good balance for chat images
-          const MAX_SIZE = 1000; 
+          const MAX_SIZE = 1200; 
 
           if (width > height) {
             if (width > MAX_SIZE) {
@@ -231,38 +240,78 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
               height = MAX_SIZE;
             }
           }
-
           canvas.width = width;
           canvas.height = height;
           const ctx = canvas.getContext('2d');
           ctx?.drawImage(img, 0, 0, width, height);
-          
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-          resolve(dataUrl);
+          resolve(canvas.toDataURL('image/jpeg', 0.8));
         };
       };
       reader.onerror = (err) => reject(err);
     });
   };
 
-  // Gofile Upload for Large Files (Free, No Key, CORS Friendly)
+  // Litterbox Upload (Fallback for < 1GB)
+  const uploadToLitterbox = async (file: File): Promise<string> => {
+       setProcessStatus('Загрузка (Litterbox)...');
+       const formData = new FormData();
+       formData.append('reqtype', 'fileupload');
+       formData.append('time', '72h'); // 3 days
+       formData.append('fileToUpload', file);
+       
+       // Use cors proxy if needed, but Litterbox usually allows
+       const response = await fetch('https://litterbox.catbox.moe/resources/internals/api.php', {
+           method: 'POST',
+           body: formData
+       });
+       
+       if (!response.ok) throw new Error('Litterbox failed');
+       const text = await response.text();
+       if (!text.startsWith('http')) throw new Error('Invalid Litterbox response');
+       return text;
+  };
+
+  // Gofile Upload (Primary for > 1GB)
   const uploadToGofile = async (file: File): Promise<string> => {
       return new Promise(async (resolve, reject) => {
         try {
-            // 1. Get Best Server
+            // 1. Get Token (Guest Account)
+            setProcessStatus('Подключение...');
+            setProcessProgress(5);
+            
+            let token = '';
+            try {
+                const tokenRes = await fetch('https://api.gofile.io/accounts', { method: 'POST' });
+                const tokenData = await tokenRes.json();
+                if (tokenData.status === 'ok') token = tokenData.data.token;
+            } catch (e) {
+                console.warn('Gofile token failed, trying anonymous');
+            }
+
+            // 2. Get Server
             setProcessStatus('Поиск сервера...');
             setProcessProgress(10);
             
-            const serverRes = await fetch('https://api.gofile.io/getServer');
+            const serverRes = await fetch('https://api.gofile.io/servers');
             const serverData = await serverRes.json();
             
-            if (serverData.status !== 'ok') throw new Error('Gofile servers busy');
-            const server = serverData.data.server;
+            let server = '';
+            // Gofile API structure sometimes changes
+            if (serverData.status === 'ok') {
+                if (serverData.data.servers && serverData.data.servers.length > 0) {
+                     server = serverData.data.servers[0].name;
+                } else if (serverData.data.server) {
+                     server = serverData.data.server;
+                }
+            }
+            
+            if (!server) throw new Error('Все серверы Gofile заняты');
 
-            // 2. Upload
+            // 3. Upload
             setProcessStatus('Загрузка в облако...');
             const formData = new FormData();
             formData.append('file', file);
+            if (token) formData.append('token', token);
 
             const xhr = new XMLHttpRequest();
             xhr.open('POST', `https://${server}.gofile.io/uploadFile`);
@@ -270,8 +319,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
             xhr.upload.onprogress = (event) => {
                 if (event.lengthComputable) {
                     const percentComplete = (event.loaded / event.total) * 100;
-                    // Scale progress from 20% to 90%
-                    setProcessProgress(20 + (percentComplete * 0.7));
+                    setProcessProgress(20 + (percentComplete * 0.75));
                 }
             };
 
@@ -283,21 +331,18 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
                             setProcessProgress(100);
                             resolve(response.data.downloadPage);
                         } else {
-                            reject(new Error('Gofile upload error'));
+                            reject(new Error(response.status || 'Ошибка Gofile'));
                         }
                     } catch (e) {
-                        reject(new Error('Invalid response'));
+                        reject(new Error('Ошибка ответа сервера'));
                     }
                 } else {
-                    reject(new Error('Upload failed'));
+                    reject(new Error(`HTTP Ошибка ${xhr.status}`));
                 }
             };
-
-            xhr.onerror = () => reject(new Error('Network error'));
             
-            // Allow cancelling
+            xhr.onerror = () => reject(new Error('Ошибка сети'));
             abortControllerRef.current = { abort: () => xhr.abort() } as any;
-            
             xhr.send(formData);
 
         } catch (error) {
@@ -320,6 +365,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
     }
     setIsProcessing(false);
     setProcessProgress(0);
+    setUploadError('');
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -327,6 +373,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
     if (!file || !currentUser || !chatId) return;
     
     e.target.value = ''; // Reset input
+    setUploadError('');
 
     let type: 'image' | 'video' | 'audio' | 'file' = 'file';
     if (file.type.startsWith('image/')) type = 'image';
@@ -341,18 +388,37 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
         let resultUrl = '';
         const fileSizeStr = formatFileSize(file.size);
 
-        // STRATEGY: 
-        // Images < 2MB -> Base64 (Instant, Permanent in DB)
-        // Files / Videos -> Gofile.io (Large file support)
-        
-        if (type === 'image' && file.size < 2 * 1024 * 1024) {
+        // STRATEGY:
+        // 1. Small Images (< 5MB) -> Compress & Base64 (Instant)
+        // 2. Small Files (< 10MB) -> Base64 (Instant, Permanent)
+        // 3. Medium Files (< 1GB) -> Litterbox (Fast, Reliable, No Keys)
+        // 4. Large Files (> 1GB) -> Gofile (Supports up to 10GB+)
+
+        if (type === 'image' && file.size < 5 * 1024 * 1024) {
             setProcessStatus('Сжатие...');
-            setProcessProgress(50);
+            setProcessProgress(30);
             resultUrl = await compressImage(file);
             setProcessProgress(100);
+        } else if (file.size < 10 * 1024 * 1024) {
+            // Small files go direct to DB
+            setProcessStatus('Кодирование...');
+            setProcessProgress(50);
+            resultUrl = await convertToBase64(file);
+            setProcessProgress(100);
         } else {
-            // Use Gofile for everything else
-            resultUrl = await uploadToGofile(file);
+            // Larger files
+            if (file.size < 1024 * 1024 * 1024) {
+                // Try Litterbox first for medium files (it's simpler/faster API)
+                try {
+                    resultUrl = await uploadToLitterbox(file);
+                } catch (e) {
+                    console.warn('Litterbox failed, trying Gofile', e);
+                    resultUrl = await uploadToGofile(file);
+                }
+            } else {
+                // Huge files go to Gofile
+                resultUrl = await uploadToGofile(file);
+            }
         }
         
         await sendMessage(resultUrl, type, file.name, fileSizeStr);
@@ -364,8 +430,8 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
 
     } catch (err: any) {
         console.error(err);
-        alert("Ошибка загрузки. Попробуйте файл поменьше или проверьте интернет.");
-        setIsProcessing(false);
+        setUploadError(err.message || "Не удалось загрузить файл");
+        setProcessStatus("Ошибка");
     }
   };
 
@@ -397,8 +463,10 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
   };
 
   const renderMessageContent = (msg: ExtendedMessage, isMe: boolean) => {
-      // Helper for Gofile links
+      // Helper for external links
+      const isExternalLink = msg.text.startsWith('http') && !msg.text.startsWith('data:');
       const isGofile = msg.text.includes('gofile.io');
+      const isLitterbox = msg.text.includes('catbox.moe');
 
       // Text
       if (!msg.type || msg.type === 'text') {
@@ -424,7 +492,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
           );
       }
 
-      // Images (Base64)
+      // Images (Base64 or URL)
       if (msg.type === 'image') {
           return (
               <div className="relative">
@@ -445,8 +513,8 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
           );
       }
 
-      // Gofile handling for generic files/videos
-      if (isGofile) {
+      // Generic File/Video handling
+      if (isExternalLink && (isGofile || isLitterbox || msg.type === 'file')) {
           return (
               <div className="flex items-center gap-3 pr-2 min-w-[180px]">
                   <div className="bg-black/10 dark:bg-white/10 p-3 rounded-full">
@@ -454,7 +522,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
                   </div>
                   <div className="flex-1 overflow-hidden">
                       <p className="text-sm font-medium truncate max-w-[140px]">{msg.fileName || 'Файл'}</p>
-                      <p className="text-[10px] opacity-70 mb-1">{msg.fileSize || 'Файл Gofile'}</p>
+                      <p className="text-[10px] opacity-70 mb-1">{msg.fileSize || (isGofile ? 'Gofile Cloud' : 'Cloud File')}</p>
                       <a 
                         href={msg.text} 
                         target="_blank" 
@@ -473,7 +541,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
       }
 
       if (msg.type === 'video') {
-          // This implies a direct link (rare in this setup unless very small)
+          // This implies a direct link (Base64)
           return (
               <div className="relative max-w-[240px]">
                   <video src={msg.text} controls className="w-full rounded-lg bg-black/10" />
@@ -482,6 +550,18 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
                     {isMe && (msg.read ? <CheckCheck size={14} strokeWidth={2} /> : <Check size={14} strokeWidth={2} />)}
                   </div>
               </div>
+          );
+      }
+      
+      if (msg.type === 'audio') {
+           return (
+            <div className="flex flex-col min-w-[200px]">
+                <audio src={msg.text} controls className="w-full h-10 mb-1" />
+                <div className="flex justify-end items-center gap-1 text-[11px] opacity-70">
+                    <span>{formatTime(msg.timestamp)}</span>
+                    {isMe && (msg.read ? <CheckCheck size={14} strokeWidth={2} /> : <Check size={14} strokeWidth={2} />)}
+                </div>
+            </div>
           );
       }
 
@@ -545,17 +625,19 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
           <div className="absolute top-16 left-0 right-0 z-30 px-4 animate-in slide-in-from-top-5 duration-300">
              <div className={`${bgCard} p-3 rounded-xl shadow-lg border border-blue-500/20 flex items-center gap-3`}>
                  <div className="relative">
-                    <Loader2 className={`animate-spin ${iconColor}`} size={24} />
-                    {processProgress > 0 && <span className="absolute inset-0 flex items-center justify-center text-[8px] font-bold">{Math.round(processProgress)}</span>}
+                    {uploadError ? <AlertCircle className="text-red-500" size={24} /> : <Loader2 className={`animate-spin ${iconColor}`} size={24} />}
+                    {!uploadError && processProgress > 0 && <span className="absolute inset-0 flex items-center justify-center text-[8px] font-bold">{Math.round(processProgress)}</span>}
                  </div>
-                 <div className="flex-1">
+                 <div className="flex-1 overflow-hidden">
                     <div className="flex justify-between text-xs mb-1">
-                       <span className={`font-medium ${textPrimary}`}>{processStatus}</span>
-                       <span className={textSecondary}>{Math.round(processProgress)}%</span>
+                       <span className={`font-medium truncate ${uploadError ? 'text-red-500' : textPrimary}`}>{uploadError || processStatus}</span>
+                       {!uploadError && <span className={textSecondary}>{Math.round(processProgress)}%</span>}
                     </div>
-                    <div className="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
-                       <div className="h-full bg-blue-500 transition-all duration-300 ease-out" style={{ width: `${processProgress}%` }}></div>
-                    </div>
+                    {!uploadError && (
+                        <div className="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
+                           <div className="h-full bg-blue-500 transition-all duration-300 ease-out" style={{ width: `${processProgress}%` }}></div>
+                        </div>
+                    )}
                  </div>
                  <button onClick={cancelUpload} className="p-1 hover:bg-black/10 rounded-full transition">
                     <X size={18} className="text-gray-500" />
@@ -570,7 +652,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
           const isActive = activePickerId === msg.id;
           const isMedia = msg.type === 'image' || isGofile(msg.text);
 
-          function isGofile(txt: string) { return txt.includes('gofile.io'); }
+          function isGofile(txt: string) { return txt.includes('gofile.io') || txt.includes('catbox.moe'); }
 
           return (
             <div 

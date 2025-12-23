@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db, auth } from '../firebase';
 import { ref, push, onValue, set, update, remove, serverTimestamp } from 'firebase/database';
 import { UserProfile, Message, Theme, UserStatus } from '../types';
-import { ArrowLeft, Send, Smile, X, Paperclip, Image as ImageIcon, Video, Music, FileText, Sticker as StickerIcon, Gift, Check, CheckCheck, Play, Download } from 'lucide-react';
+import { ArrowLeft, Send, Smile, X, Paperclip, Image as ImageIcon, Video, Music, FileText, Sticker as StickerIcon, Gift, Check, CheckCheck, Play, Download, Loader2 } from 'lucide-react';
 
 interface ChatRoomProps {
   recipient: UserProfile;
@@ -50,6 +50,9 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
   const [showAttachments, setShowAttachments] = useState(false);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
   const [stickerTab, setStickerTab] = useState<'stickers' | 'gifs'>('stickers');
+
+  // Upload State
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<any>(null);
@@ -127,7 +130,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isRecipientTyping, showStickerPicker, showAttachments]);
+  }, [messages, isRecipientTyping, showStickerPicker, showAttachments, uploadProgress]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInputText(e.target.value);
@@ -154,7 +157,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
 
     await set(newMessageRef, {
       senderId: currentUser.uid,
-      text: content, // For media, this is the Base64 Data URL
+      text: content, // For media, this is the Download URL
       type: type,
       timestamp: timestamp,
       read: false,
@@ -203,31 +206,66 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !currentUser || !chatId) return;
 
-    // Size limit 3MB to prevent database crash
-    if (file.size > 3 * 1024 * 1024) {
-        alert('Файл слишком большой. Лимит 3МБ.');
-        return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-        if (ev.target?.result) {
-            const base64 = ev.target.result as string;
-            let type: 'image' | 'video' | 'audio' | 'file' = 'file';
-
-            if (file.type.startsWith('image/')) type = 'image';
-            else if (file.type.startsWith('video/')) type = 'video';
-            else if (file.type.startsWith('audio/')) type = 'audio';
-
-            sendMessage(base64, type, file.name);
-        }
-    };
-    reader.readAsDataURL(file);
+    // Reset input
     e.target.value = '';
+
+    let type: 'image' | 'video' | 'audio' | 'file' = 'file';
+    if (file.type.startsWith('image/')) type = 'image';
+    else if (file.type.startsWith('video/')) type = 'video';
+    else if (file.type.startsWith('audio/')) type = 'audio';
+
+    // Using Pixeldrain API (No auth required, 5GB limit, 60 days retention)
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('name', file.name);
+
+    const xhr = new XMLHttpRequest();
+    
+    // Progress
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        const percentComplete = (event.loaded / event.total) * 100;
+        setUploadProgress(percentComplete);
+      }
+    };
+
+    xhr.onload = async () => {
+      if (xhr.status === 201 || xhr.status === 200) {
+        const response = JSON.parse(xhr.responseText);
+        if (response.success) {
+           // Pixeldrain URL format: https://pixeldrain.com/u/{id}
+           // For direct file access (images), use /api/file/{id}
+           let downloadURL = `https://pixeldrain.com/u/${response.id}`;
+           
+           // Optimization for images/video to show inline
+           if (type === 'image' || type === 'video' || type === 'audio') {
+               downloadURL = `https://pixeldrain.com/api/file/${response.id}`;
+           }
+
+           await sendMessage(downloadURL, type, file.name);
+           setUploadProgress(null);
+        } else {
+           alert("Ошибка сервера загрузки: " + response.message);
+           setUploadProgress(null);
+        }
+      } else {
+        alert("Ошибка загрузки. Код: " + xhr.status);
+        setUploadProgress(null);
+      }
+    };
+
+    xhr.onerror = () => {
+      alert("Ошибка сети при загрузке");
+      setUploadProgress(null);
+    };
+
+    xhr.open('POST', 'https://pixeldrain.com/api/file');
+    // Pixeldrain allows anonymous uploads via POST
+    xhr.send(formData);
   };
 
   // Format Time
@@ -328,7 +366,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
                   </div>
                   <div className="flex-1 overflow-hidden">
                       <p className="text-sm font-medium truncate max-w-[120px]">{msg.fileName || 'Файл'}</p>
-                      <a href={msg.text} download={msg.fileName || 'file'} className="text-xs underline opacity-80 hover:opacity-100 block">Скачать</a>
+                      <a href={msg.text} target="_blank" rel="noopener noreferrer" download className="text-xs underline opacity-80 hover:opacity-100 block">Скачать</a>
                   </div>
                   <div className={`flex flex-col items-end gap-0.5 text-[11px] opacity-70 ml-2 ${isMe ? 'text-blue-50' : 'text-gray-400'}`}>
                      <span>{formatTime(msg.timestamp)}</span>
@@ -388,6 +426,27 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
           </div>
         </div>
       </div>
+
+      {/* Upload Progress Overlay (Telegram style) */}
+      {uploadProgress !== null && (
+          <div className="absolute top-16 left-0 right-0 z-30 px-4 animate-in slide-in-from-top-5 duration-300">
+             <div className={`${bgCard} p-3 rounded-xl shadow-lg border border-blue-500/20 flex items-center gap-3`}>
+                 <div className="relative">
+                    <Loader2 className={`animate-spin ${iconColor}`} size={24} />
+                    <span className="absolute inset-0 flex items-center justify-center text-[8px] font-bold">{Math.round(uploadProgress)}</span>
+                 </div>
+                 <div className="flex-1">
+                    <div className="flex justify-between text-xs mb-1">
+                       <span className={`font-medium ${textPrimary}`}>Загрузка файла...</span>
+                       <span className={textSecondary}>{Math.round(uploadProgress)}%</span>
+                    </div>
+                    <div className="h-1.5 w-full bg-gray-200 rounded-full overflow-hidden">
+                       <div className="h-full bg-blue-500 transition-all duration-300 ease-out" style={{ width: `${uploadProgress}%` }}></div>
+                    </div>
+                 </div>
+             </div>
+          </div>
+      )}
 
       {/* Messages */}
       <div className={`flex-1 overflow-y-auto p-4 space-y-1.5 no-scrollbar ${isDark ? 'bg-gray-900' : (theme === 'newyear' ? 'bg-red-50/30' : 'bg-[#eef2f5]')}`} onClick={() => { setShowAttachments(false); setShowStickerPicker(false); }}>

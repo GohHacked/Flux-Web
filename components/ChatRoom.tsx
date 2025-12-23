@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db, auth } from '../firebase';
+import { db, auth, storage } from '../firebase';
 import { ref, push, onValue, set, update, remove, serverTimestamp } from 'firebase/database';
+import { ref as storageRef, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { UserProfile, Message, Theme, UserStatus } from '../types';
 import { ArrowLeft, Send, Smile, X, Paperclip, Image as ImageIcon, Video, Music, FileText, Sticker as StickerIcon, Gift, Check, CheckCheck, Play, Download, Loader2 } from 'lucide-react';
 
@@ -218,54 +219,42 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
     else if (file.type.startsWith('video/')) type = 'video';
     else if (file.type.startsWith('audio/')) type = 'audio';
 
-    // Using Pixeldrain API (No auth required, 5GB limit, 60 days retention)
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('name', file.name);
+    // 2025 Standard: Firebase Storage with Resumable Upload
+    // This allows large files (up to terabytes) and handles network interruptions
+    try {
+        const storageRefPath = `chat_files/${chatId}/${Date.now()}_${file.name}`;
+        const fileRef = storageRef(storage, storageRefPath);
+        
+        const uploadTask = uploadBytesResumable(fileRef, file);
 
-    const xhr = new XMLHttpRequest();
-    
-    // Progress
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) {
-        const percentComplete = (event.loaded / event.total) * 100;
-        setUploadProgress(percentComplete);
-      }
-    };
-
-    xhr.onload = async () => {
-      if (xhr.status === 201 || xhr.status === 200) {
-        const response = JSON.parse(xhr.responseText);
-        if (response.success) {
-           // Pixeldrain URL format: https://pixeldrain.com/u/{id}
-           // For direct file access (images), use /api/file/{id}
-           let downloadURL = `https://pixeldrain.com/u/${response.id}`;
-           
-           // Optimization for images/video to show inline
-           if (type === 'image' || type === 'video' || type === 'audio') {
-               downloadURL = `https://pixeldrain.com/api/file/${response.id}`;
-           }
-
-           await sendMessage(downloadURL, type, file.name);
-           setUploadProgress(null);
-        } else {
-           alert("Ошибка сервера загрузки: " + response.message);
-           setUploadProgress(null);
-        }
-      } else {
-        alert("Ошибка загрузки. Код: " + xhr.status);
+        uploadTask.on('state_changed', 
+            (snapshot) => {
+                const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                setUploadProgress(progress);
+            }, 
+            (error) => {
+                console.error("Upload error:", error);
+                // Friendly error message for CORS or permissions
+                if (error.code === 'storage/unauthorized') {
+                   alert("Ошибка доступа. Проверьте правила Storage в консоли Firebase.");
+                } else if (error.message.includes('cors')) {
+                   alert("Ошибка CORS. Требуется настройка на сервере.");
+                } else {
+                   alert("Ошибка загрузки: " + error.message);
+                }
+                setUploadProgress(null);
+            }, 
+            async () => {
+                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                await sendMessage(downloadURL, type, file.name);
+                setUploadProgress(null);
+            }
+        );
+    } catch (err: any) {
+        console.error(err);
+        alert("Не удалось начать загрузку.");
         setUploadProgress(null);
-      }
-    };
-
-    xhr.onerror = () => {
-      alert("Ошибка сети при загрузке");
-      setUploadProgress(null);
-    };
-
-    xhr.open('POST', 'https://pixeldrain.com/api/file');
-    // Pixeldrain allows anonymous uploads via POST
-    xhr.send(formData);
+    }
   };
 
   // Format Time

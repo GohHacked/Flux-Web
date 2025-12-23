@@ -393,7 +393,7 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
 
        <div className="text-center mb-8">
           <p className={`font-bold text-lg ${textPrimary}`}>Flux Web</p>
-          <p className={`${textSecondary} text-sm`}>Версия 0.2</p>
+          <p className={`${textSecondary} text-sm`}>Версия 0.1</p>
        </div>
 
        <button 

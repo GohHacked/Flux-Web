@@ -292,31 +292,23 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
                           className="w-14 h-14 rounded-full bg-gray-200 object-cover"
                         />
                       </div>
+                      
+                      {/* Flex container for content with proper overflow handling */}
                       <div className="flex-1 min-w-0 pr-1">
-                        <div className="flex justify-between items-center mb-0.5">
-                          <h3 className={`font-semibold text-base truncate ${textPrimary}`}>{chat.recipientUser?.displayName}</h3>
-                          <div className="flex flex-col items-end gap-1">
-                              <span className={`text-[11px] ${unreadCount > 0 ? 'text-blue-500 font-medium' : textSecondary}`}>
-                                 {new Date(chat.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                              </span>
-                          </div>
+                        <div className="flex justify-between items-center mb-0.5 gap-2">
+                          <h3 className={`font-semibold text-base truncate flex-1 min-w-0 ${textPrimary}`}>{chat.recipientUser?.displayName}</h3>
+                          <span className={`text-[11px] whitespace-nowrap flex-shrink-0 ${unreadCount > 0 ? 'text-blue-500 font-medium' : textSecondary}`}>
+                             {new Date(chat.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                          </span>
                         </div>
                         
-                        <div className="flex justify-between items-center">
-                            {/* Typing or Last Message */}
-                            {chat.isTyping ? (
-                               <p className={`text-sm truncate font-medium animate-pulse ${accentText}`}>
-                                 печатает...
-                               </p>
-                            ) : (
-                               <p className={`${unreadCount > 0 ? textPrimary : textSecondary} text-sm truncate leading-snug pr-4`}>
-                                   {chat.lastMessage || 'Изображение'}
-                               </p>
-                            )}
+                        <div className="flex justify-between items-center gap-2 h-5">
+                            <p className={`text-sm truncate flex-1 min-w-0 leading-snug ${chat.isTyping ? accentText + ' animate-pulse font-medium' : (unreadCount > 0 ? textPrimary : textSecondary)}`}>
+                               {chat.isTyping ? 'печатает...' : (chat.lastMessage || 'Изображение')}
+                            </p>
 
-                            {/* Unread Counter Badge */}
                             {unreadCount > 0 && (
-                                <div className={`min-w-[20px] h-5 px-1.5 rounded-full flex items-center justify-center text-[11px] font-bold text-white animate-in zoom-in duration-300 ${theme === 'newyear' ? 'bg-red-500' : (isDark ? 'bg-purple-600' : 'bg-blue-500')}`}>
+                                <div className={`flex-shrink-0 min-w-[20px] h-5 px-1.5 rounded-full flex items-center justify-center text-[11px] font-bold text-white animate-in zoom-in duration-300 ${theme === 'newyear' ? 'bg-red-500' : (isDark ? 'bg-purple-600' : 'bg-blue-500')}`}>
                                     {unreadCount}
                                 </div>
                             )}

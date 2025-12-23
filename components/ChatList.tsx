@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { db, auth } from '../firebase';
 import { ref, onValue, get } from 'firebase/database';
 import { UserProfile, ChatSession, Theme } from '../types';
@@ -20,6 +20,10 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
   const [searchResults, setSearchResults] = useState<UserProfile[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [isConnected, setIsConnected] = useState(true);
+  
+  // New state for unread counts
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  const initialLoadRef = useRef(true);
 
   const currentUser = auth.currentUser;
 
@@ -41,6 +45,13 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
   const textSecondary = isDark ? 'text-gray-400' : 'text-gray-500';
   const accentText = theme === 'newyear' ? 'text-red-500' : (isDark ? 'text-purple-400' : 'text-blue-500');
 
+  // Request Notification Permission
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
   // Connection Status Listener
   useEffect(() => {
     const connectedRef = ref(db, '.info/connected');
@@ -50,6 +61,7 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
     return () => unsubscribe();
   }, []);
 
+  // Load Chats
   useEffect(() => {
     if (!currentUser) return;
     const chatsRef = ref(db, 'chats');
@@ -75,7 +87,6 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
                    }
                }
 
-               // Optimisation: ideally we should cache users, but for now fetching is fine
                const userRef = ref(db, `users/${otherUid}`);
                const userSnap = await get(userRef);
                
@@ -96,9 +107,62 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
       loadedChats.sort((a, b) => b.timestamp - a.timestamp);
       setChats(loadedChats);
       setLoading(false);
+      
+      // Allow notifications after initial load logic
+      setTimeout(() => { initialLoadRef.current = false; }, 2000);
     });
     return () => unsubscribe();
   }, [currentUser]);
+
+  // Listen for Unread Messages & Trigger Notifications
+  useEffect(() => {
+    if (!currentUser || chats.length === 0) return;
+
+    const unsubs: (() => void)[] = [];
+
+    chats.forEach(chat => {
+      const messagesRef = ref(db, `messages/${chat.chatId}`);
+      
+      const unsub = onValue(messagesRef, (snapshot) => {
+         const msgs = snapshot.val();
+         if (!msgs) {
+             setUnreadCounts(prev => ({ ...prev, [chat.chatId]: 0 }));
+             return;
+         }
+
+         let count = 0;
+         let lastUnreadMsg = '';
+         
+         Object.values(msgs).forEach((m: any) => {
+            if (m.senderId !== currentUser.uid && !m.read) {
+                count++;
+                lastUnreadMsg = m.text;
+            }
+         });
+
+         setUnreadCounts(prev => {
+             const prevCount = prev[chat.chatId] || 0;
+             
+             // Trigger Notification if count increased and not initial load
+             if (count > prevCount && !initialLoadRef.current) {
+                 if (Notification.permission === 'granted' && chat.recipientUser) {
+                     new Notification(chat.recipientUser.displayName, {
+                         body: lastUnreadMsg.startsWith('data:') ? 'Фото' : lastUnreadMsg,
+                         icon: chat.recipientUser.photoURL,
+                         silent: false
+                     });
+                 }
+             }
+             
+             return { ...prev, [chat.chatId]: count };
+         });
+      });
+      
+      unsubs.push(unsub);
+    });
+
+    return () => unsubs.forEach(u => u());
+  }, [chats, currentUser]);
 
   const handleSearch = async (term: string) => {
     setSearchTerm(term);
@@ -213,39 +277,54 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
                  <p className="text-xs mt-1">Найдите друзей через поиск</p>
                </div>
              ) : (
-               chats.map((chat) => (
-                 <div
-                   key={chat.chatId}
-                   onClick={() => chat.recipientUser && onSelectChat(chat.recipientUser)}
-                   className={`flex items-center gap-3 ${cardBg} p-3 mx-1 rounded-xl cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition active:scale-[0.99]`}
-                 >
-                    <div className="relative">
-                      <img
-                        src={chat.recipientUser?.photoURL}
-                        alt="Avatar"
-                        className="w-14 h-14 rounded-full bg-gray-200 object-cover"
-                      />
-                    </div>
-                    <div className="flex-1 min-w-0 pr-1">
-                      <div className="flex justify-between items-center mb-0.5">
-                        <h3 className={`font-semibold text-base truncate ${textPrimary}`}>{chat.recipientUser?.displayName}</h3>
-                        <span className={`text-[11px] ${textSecondary}`}>
-                           {new Date(chat.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                        </span>
+               chats.map((chat) => {
+                 const unreadCount = unreadCounts[chat.chatId] || 0;
+                 return (
+                   <div
+                     key={chat.chatId}
+                     onClick={() => chat.recipientUser && onSelectChat(chat.recipientUser)}
+                     className={`flex items-center gap-3 ${cardBg} p-3 mx-1 rounded-xl cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition active:scale-[0.99] group`}
+                   >
+                      <div className="relative">
+                        <img
+                          src={chat.recipientUser?.photoURL}
+                          alt="Avatar"
+                          className="w-14 h-14 rounded-full bg-gray-200 object-cover"
+                        />
                       </div>
-                      
-                      {/* Typing Indicator Logic */}
-                      {chat.isTyping ? (
-                         <p className={`text-sm truncate font-medium animate-pulse ${accentText}`}>
-                           печатает...
-                         </p>
-                      ) : (
-                         <p className={`${textSecondary} text-sm truncate leading-snug`}>{chat.lastMessage || 'Изображение'}</p>
-                      )}
-                      
-                    </div>
-                 </div>
-               ))
+                      <div className="flex-1 min-w-0 pr-1">
+                        <div className="flex justify-between items-center mb-0.5">
+                          <h3 className={`font-semibold text-base truncate ${textPrimary}`}>{chat.recipientUser?.displayName}</h3>
+                          <div className="flex flex-col items-end gap-1">
+                              <span className={`text-[11px] ${unreadCount > 0 ? 'text-blue-500 font-medium' : textSecondary}`}>
+                                 {new Date(chat.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                              </span>
+                          </div>
+                        </div>
+                        
+                        <div className="flex justify-between items-center">
+                            {/* Typing or Last Message */}
+                            {chat.isTyping ? (
+                               <p className={`text-sm truncate font-medium animate-pulse ${accentText}`}>
+                                 печатает...
+                               </p>
+                            ) : (
+                               <p className={`${unreadCount > 0 ? textPrimary : textSecondary} text-sm truncate leading-snug pr-4`}>
+                                   {chat.lastMessage || 'Изображение'}
+                               </p>
+                            )}
+
+                            {/* Unread Counter Badge */}
+                            {unreadCount > 0 && (
+                                <div className={`min-w-[20px] h-5 px-1.5 rounded-full flex items-center justify-center text-[11px] font-bold text-white animate-in zoom-in duration-300 ${theme === 'newyear' ? 'bg-red-500' : (isDark ? 'bg-purple-600' : 'bg-blue-500')}`}>
+                                    {unreadCount}
+                                </div>
+                            )}
+                        </div>
+                      </div>
+                   </div>
+                 );
+               })
              )}
           </div>
         )}

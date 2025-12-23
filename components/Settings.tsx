@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../firebase';
 import { updateProfile } from 'firebase/auth';
-import { ref, update, get, set, remove, child } from 'firebase/database';
-import { LogOut, Edit2, Moon, Sun, Snowflake, Palette, ArrowLeft, ChevronRight, Info, Camera, Upload } from 'lucide-react';
+import { ref, update, get, child } from 'firebase/database';
+import { LogOut, Edit2, Moon, Sun, Snowflake, Palette, ArrowLeft, ChevronRight, Camera, Upload } from 'lucide-react';
 import { UserProfile, Theme } from '../types';
 
 interface SettingsProps {
@@ -49,13 +49,35 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
            setUsername(data.username);
            setNewUsername(data.username);
            setDisplayName(data.displayName);
-           setPhotoURL(data.photoURL);
+           // Prioritize DB photoURL as it handles Base64 better than Auth
+           if (data.photoURL) setPhotoURL(data.photoURL);
            setBio(data.bio || '');
          }
       };
       fetchUserData();
     }
   }, [currentUser]);
+
+  // Helper to compress image
+  const compressImage = (base64Str: string, maxWidth = 300): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64Str;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ratio = maxWidth / img.width;
+        if (img.width <= maxWidth) {
+           resolve(base64Str);
+           return;
+        }
+        canvas.width = maxWidth;
+        canvas.height = img.height * ratio;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
+      };
+    });
+  };
 
   const handleSave = async () => {
     if (!currentUser) return;
@@ -91,12 +113,21 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
       updates[`users/${currentUser.uid}/photoURL`] = photoURL;
       updates[`users/${currentUser.uid}/bio`] = bio;
 
+      // 1. Update Realtime Database (Can hold Base64)
       await update(ref(db), updates);
 
-      await updateProfile(currentUser, {
-        displayName: displayName,
-        photoURL: photoURL
-      });
+      // 2. Update Firebase Auth Profile (ONLY if URL is short)
+      // Base64 strings are too long for Auth profile and cause "auth/invalid-profile-attribute"
+      // We skip updating Auth photoURL if it's a data string, relying on DB for the app UI.
+      const authUpdates: { displayName?: string; photoURL?: string } = {
+        displayName: displayName
+      };
+
+      if (!photoURL.startsWith('data:')) {
+         authUpdates.photoURL = photoURL;
+      }
+
+      await updateProfile(currentUser, authUpdates);
 
       if (usernameChanged) {
         setUsername(cleanNewUsername);
@@ -122,15 +153,18 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 2 * 1024 * 1024) {
-      setError('Файл слишком большой (макс 2МБ)');
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Файл слишком большой (макс 5МБ)');
       return;
     }
 
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
         if (ev.target?.result) {
-            setPhotoURL(ev.target.result as string);
+            const rawBase64 = ev.target.result as string;
+            // Compress to avoid lagging DB
+            const compressed = await compressImage(rawBase64);
+            setPhotoURL(compressed);
         }
     };
     reader.readAsDataURL(file);
@@ -315,9 +349,9 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
 
        {/* Profile Card */}
        <div className={`${bgCard} p-6 rounded-3xl shadow-sm mb-6 flex items-center gap-4`}>
-          <img src={currentUser?.photoURL || ''} className="w-16 h-16 rounded-full bg-gray-200 object-cover" />
+          <img src={photoURL || currentUser?.photoURL || ''} className="w-16 h-16 rounded-full bg-gray-200 object-cover" />
           <div className="min-w-0">
-            <h2 className={`text-xl font-bold truncate ${textPrimary}`}>{currentUser?.displayName}</h2>
+            <h2 className={`text-xl font-bold truncate ${textPrimary}`}>{displayName}</h2>
             <p className={`${accentText} truncate`}>@{username}</p>
           </div>
        </div>
@@ -359,7 +393,7 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
 
        <div className="text-center mb-8">
           <p className={`font-bold text-lg ${textPrimary}`}>Flux Web</p>
-          <p className={`${textSecondary} text-sm`}>Версия 0.1</p>
+          <p className={`${textSecondary} text-sm`}>Версия 0.2</p>
        </div>
 
        <button 

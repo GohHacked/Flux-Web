@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db, auth } from '../firebase';
 import { ref, push, onValue, set, update, remove, serverTimestamp } from 'firebase/database';
 import { UserProfile, Message, Theme, UserStatus } from '../types';
-import { ArrowLeft, Send, Smile, X, Paperclip, Image as ImageIcon, Video, Music, FileText, Sticker as StickerIcon, Gift, Check, CheckCheck } from 'lucide-react';
+import { ArrowLeft, Send, Smile, X, Paperclip, Image as ImageIcon, Video, Music, FileText, Sticker as StickerIcon, Gift, Check, CheckCheck, Play, Download } from 'lucide-react';
 
 interface ChatRoomProps {
   recipient: UserProfile;
@@ -12,6 +12,8 @@ interface ChatRoomProps {
 
 interface ExtendedMessage extends Message {
   read?: boolean;
+  type?: 'text' | 'image' | 'video' | 'audio' | 'file';
+  fileName?: string;
 }
 
 const AVAILABLE_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
@@ -136,7 +138,7 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
     typingTimeoutRef.current = setTimeout(() => remove(myTypingRef), 3000);
   };
 
-  const sendMessage = async (content: string, type: 'text' | 'image' = 'text') => {
+  const sendMessage = async (content: string, type: 'text' | 'image' | 'video' | 'audio' | 'file' = 'text', fileName?: string) => {
     if (!currentUser || !chatId) return;
     
     setInputText('');
@@ -152,16 +154,23 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
 
     await set(newMessageRef, {
       senderId: currentUser.uid,
-      text: content,
+      text: content, // For media, this is the Base64 Data URL
       type: type,
       timestamp: timestamp,
-      read: false
+      read: false,
+      fileName: fileName || null
     });
 
     const chatMetaRef = ref(db, `chats/${chatId}`);
+    let lastMsgText = content;
+    if (type === 'image') lastMsgText = 'Фото';
+    if (type === 'video') lastMsgText = 'Видео';
+    if (type === 'audio') lastMsgText = 'Голосовое сообщение';
+    if (type === 'file') lastMsgText = 'Файл';
+
     await update(chatMetaRef, {
       participants: [currentUser.uid, recipient.uid],
-      lastMessage: type === 'image' ? 'Стикер' : content,
+      lastMessage: lastMsgText,
       timestamp: timestamp
     });
   };
@@ -198,24 +207,26 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.type.startsWith('image/')) {
-        if (file.size > 1024 * 1024) {
-            alert('Изображение слишком большое (макс 1МБ)');
-            return;
-        }
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-            if (ev.target?.result) {
-                sendMessage(ev.target.result as string, 'image');
-            }
-        };
-        reader.readAsDataURL(file);
-    } else {
-        let prefix = '📄';
-        if (file.type.startsWith('video/')) prefix = '🎥';
-        if (file.type.startsWith('audio/')) prefix = '🎵';
-        sendMessage(`${prefix} Файл: ${file.name} (${Math.round(file.size / 1024)} KB)`);
+    // Size limit 3MB to prevent database crash
+    if (file.size > 3 * 1024 * 1024) {
+        alert('Файл слишком большой. Лимит 3МБ.');
+        return;
     }
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+        if (ev.target?.result) {
+            const base64 = ev.target.result as string;
+            let type: 'image' | 'video' | 'audio' | 'file' = 'file';
+
+            if (file.type.startsWith('image/')) type = 'image';
+            else if (file.type.startsWith('video/')) type = 'video';
+            else if (file.type.startsWith('audio/')) type = 'audio';
+
+            sendMessage(base64, type, file.name);
+        }
+    };
+    reader.readAsDataURL(file);
     e.target.value = '';
   };
 
@@ -247,8 +258,86 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
     return `был(а) в сети ${lastSeen.toLocaleDateString()} в ${time}`;
   };
 
-  const isMessageImage = (text: string) => {
-      return (text.startsWith('http') && (text.includes('cdn-icons-png') || text.includes('giphy'))) || text.startsWith('data:image');
+  const renderMessageContent = (msg: ExtendedMessage, isMe: boolean) => {
+      // Handle legacy messages or explicit text type
+      if (!msg.type || msg.type === 'text') {
+          // Check for legacy image URLs (stickers)
+          if ((msg.text.startsWith('http') && (msg.text.includes('cdn-icons-png') || msg.text.includes('giphy')))) {
+              return (
+                  <div className="relative">
+                    <img src={msg.text} alt="Sticker" className="max-w-[180px] w-auto h-auto object-cover rounded-xl drop-shadow-md hover:scale-105 transition" />
+                    <div className="absolute bottom-1 right-1 bg-black/30 backdrop-blur-sm rounded-full px-1.5 py-0.5 flex items-center gap-1">
+                        <span className="text-[10px] text-white opacity-90">{formatTime(msg.timestamp)}</span>
+                        {isMe && (msg.read ? <CheckCheck size={12} className="text-white" /> : <Check size={12} className="text-white" />)}
+                    </div>
+                  </div>
+              );
+          }
+          return (
+              <div className="flex flex-wrap items-end gap-x-2 gap-y-0 relative min-w-[60px]">
+                <span className="leading-snug mr-10">{msg.text}</span>
+                <div className={`ml-auto flex items-center gap-0.5 select-none opacity-70 -mb-0.5 text-[11px] absolute bottom-0 right-0 ${isMe ? 'text-blue-50' : 'text-gray-400'}`}>
+                   <span>{formatTime(msg.timestamp)}</span>
+                   {isMe && (msg.read ? <CheckCheck size={14} strokeWidth={2} /> : <Check size={14} strokeWidth={2} />)}
+                </div>
+              </div>
+          );
+      }
+
+      if (msg.type === 'image') {
+          return (
+              <div className="relative">
+                <img src={msg.text} alt="Image" className="max-w-[220px] max-h-[300px] w-auto h-auto object-cover rounded-xl" />
+                <div className="absolute bottom-1 right-1 bg-black/30 backdrop-blur-sm rounded-full px-1.5 py-0.5 flex items-center gap-1">
+                    <span className="text-[10px] text-white opacity-90">{formatTime(msg.timestamp)}</span>
+                    {isMe && (msg.read ? <CheckCheck size={12} className="text-white" /> : <Check size={12} className="text-white" />)}
+                </div>
+              </div>
+          );
+      }
+
+      if (msg.type === 'video') {
+          return (
+              <div className="relative max-w-[240px]">
+                  <video src={msg.text} controls className="w-full rounded-lg bg-black/10" />
+                  <div className="flex justify-end items-center gap-1 mt-1 text-[11px] opacity-70">
+                    <span>{formatTime(msg.timestamp)}</span>
+                    {isMe && (msg.read ? <CheckCheck size={14} strokeWidth={2} /> : <Check size={14} strokeWidth={2} />)}
+                  </div>
+              </div>
+          );
+      }
+
+      if (msg.type === 'audio') {
+          return (
+            <div className="flex flex-col min-w-[200px]">
+                <audio src={msg.text} controls className="w-full h-10 mb-1" />
+                <div className="flex justify-end items-center gap-1 text-[11px] opacity-70">
+                    <span>{formatTime(msg.timestamp)}</span>
+                    {isMe && (msg.read ? <CheckCheck size={14} strokeWidth={2} /> : <Check size={14} strokeWidth={2} />)}
+                </div>
+            </div>
+          );
+      }
+
+      if (msg.type === 'file') {
+          return (
+              <div className="flex items-center gap-3 pr-2 min-w-[160px]">
+                  <div className="bg-black/10 dark:bg-white/10 p-2 rounded-full">
+                      <FileText size={20} />
+                  </div>
+                  <div className="flex-1 overflow-hidden">
+                      <p className="text-sm font-medium truncate max-w-[120px]">{msg.fileName || 'Файл'}</p>
+                      <a href={msg.text} download={msg.fileName || 'file'} className="text-xs underline opacity-80 hover:opacity-100 block">Скачать</a>
+                  </div>
+                  <div className={`flex flex-col items-end gap-0.5 text-[11px] opacity-70 ml-2 ${isMe ? 'text-blue-50' : 'text-gray-400'}`}>
+                     <span>{formatTime(msg.timestamp)}</span>
+                     {isMe && (msg.read ? <CheckCheck size={14} strokeWidth={2} /> : <Check size={14} strokeWidth={2} />)}
+                  </div>
+              </div>
+          );
+      }
+      return null;
   };
 
   return (
@@ -304,9 +393,8 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
       <div className={`flex-1 overflow-y-auto p-4 space-y-1.5 no-scrollbar ${isDark ? 'bg-gray-900' : (theme === 'newyear' ? 'bg-red-50/30' : 'bg-[#eef2f5]')}`} onClick={() => { setShowAttachments(false); setShowStickerPicker(false); }}>
         {messages.map((msg) => {
           const isMe = msg.senderId === currentUser?.uid;
-          const isImg = isMessageImage(msg.text);
-          const myReaction = msg.reactions && currentUser ? msg.reactions[currentUser.uid] : null;
           const isActive = activePickerId === msg.id;
+          const isMedia = msg.type === 'image' || msg.type === 'video' || (msg.text.startsWith('http') && !msg.text.includes(' ')); // Simple heuristic for legacy stickers
 
           return (
             <div 
@@ -321,46 +409,22 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
 
                 <div
                   className={`relative shadow-sm break-words ${
-                    isImg 
+                    isMedia
                     ? 'bg-transparent p-0' 
                     : `px-3 py-1.5 rounded-2xl ${isMe ? `${myBubble} text-white rounded-br-md` : `${otherBubble} rounded-bl-md`}`
                   }`}
                   onClick={(e) => {
                      // On mobile, tapping the message toggles the picker to ensure accessibility if hover fails
-                     if (window.innerWidth < 768) {
+                     if (window.innerWidth < 768 && !isMedia) {
                         e.stopPropagation();
                         setActivePickerId(isActive ? null : msg.id);
                      }
                   }}
                 >
-                  {isImg ? (
-                      <div className="relative">
-                        <img src={msg.text} alt="Sticker/Image" className="max-w-[200px] max-h-[300px] w-auto h-auto object-cover rounded-xl drop-shadow-md hover:scale-105 transition" />
-                         {/* Time overlay for images */}
-                         <div className="absolute bottom-1 right-1 bg-black/30 backdrop-blur-sm rounded-full px-1.5 py-0.5 flex items-center gap-1">
-                            <span className="text-[10px] text-white opacity-90">{formatTime(msg.timestamp)}</span>
-                            {isMe && (
-                               msg.read ? <CheckCheck size={12} className="text-white" /> : <Check size={12} className="text-white" />
-                            )}
-                         </div>
-                      </div>
-                  ) : (
-                      <div className="flex flex-wrap items-end gap-x-2 gap-y-0 relative">
-                        <span className="leading-snug mr-12">{msg.text}</span>
-                        {/* Telegram-style floating time/status */}
-                        <div className={`ml-auto flex items-center gap-0.5 select-none opacity-70 -mb-0.5 text-[11px] ${isMe ? 'text-blue-50' : 'text-gray-400'}`}>
-                           <span>{formatTime(msg.timestamp)}</span>
-                           {isMe && (
-                              msg.read 
-                              ? <CheckCheck size={14} strokeWidth={2} /> 
-                              : <Check size={14} strokeWidth={2} />
-                           )}
-                        </div>
-                      </div>
-                  )}
+                  {renderMessageContent(msg, isMe)}
 
                   {/* Reaction Button (Hover & Active) */}
-                  {!isImg && (
+                  {!isMedia && (
                     <button 
                       onClick={(e) => { e.stopPropagation(); setActivePickerId(isActive ? null : msg.id); }}
                       className={`absolute -bottom-6 ${isMe ? 'right-0' : 'left-0'} p-1 text-gray-400 hover:text-gray-600 transition-all

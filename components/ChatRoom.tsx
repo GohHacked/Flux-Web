@@ -112,6 +112,18 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
 
   const chatId = currentUser ? getChatId(currentUser.uid, recipient.uid) : '';
 
+  const [chatWallpaper, setChatWallpaper] = useState<string | null>(null);
+  const [showWallpaperMenu, setShowWallpaperMenu] = useState(false);
+  const [selectedWallpaper, setSelectedWallpaper] = useState<string | null>(null);
+  const [showChatMenu, setShowChatMenu] = useState(false);
+  const wallpaperInputRef = useRef<HTMLInputElement>(null);
+
+  const PRESET_WALLPAPERS = [
+      "https://images.unsplash.com/photo-1557683316-973673baf926?q=80&w=1000&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1557682250-33bd709cbe85?q=80&w=1000&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1557682224-5b8590cd9ec5?q=80&w=1000&auto=format&fit=crop"
+  ];
+
   // 1. Fetch CURRENT USER Profile (to check for Bans)
   useEffect(() => {
     if (!currentUser) return;
@@ -158,6 +170,22 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
                 id: 'welcome',
                 senderId: FLUX_BOT_ID,
                 text: '👋 Добро пожаловать в Flux Web! Это официальный канал новостей.',
+                timestamp: Date.now() - 100000,
+                read: true,
+                type: 'text'
+            },
+            {
+                id: 'update_0_2_img',
+                senderId: FLUX_BOT_ID,
+                text: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1000&auto=format&fit=crop',
+                timestamp: Date.now() - 50000,
+                read: true,
+                type: 'image'
+            },
+            {
+                id: 'update_0_2',
+                senderId: FLUX_BOT_ID,
+                text: '🚀 Обновление Flux Web 0.2!\n\nМы рады представить вам новую версию нашего мессенджера. Мы добавили множество полезных функций для вашей безопасности и удобства:\n\n• 🔒 Защита приложения (PIN-код)\nТеперь вы можете установить 4-значный PIN-код для входа в приложение. Ваши переписки под надежной защитой!\n\n• 🖼️ Обои для чатов\nНастраивайте внешний вид каждого чата индивидуально. Выбирайте из предустановленных вариантов или загружайте свои собственные изображения.\n\n• 🔄 Пересылка сообщений\nДелитесь важной информацией в один клик.\n\n• 🗑️ Удаление сообщений\nОшиблись? Не беда. Теперь вы можете удалять свои сообщения.\n\n• 🔗 Новая ссылка-приглашение\nПриглашать друзей стало еще проще.\n\nСпасибо, что вы с нами! ❤️',
                 timestamp: Date.now(),
                 read: true,
                 type: 'text'
@@ -221,8 +249,17 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
         const timestamp = snapshot.val();
         setIsRecipientTyping(timestamp && (Date.now() - timestamp < 4000));
     });
+    
+    if (currentUser) {
+        const wallpaperRef = ref(db, `chats/${chatId}/wallpaper/${currentUser.uid}`);
+        const unsubWallpaper = onValue(wallpaperRef, (snapshot) => {
+            setChatWallpaper(snapshot.val());
+        });
+        return () => { unsubStatus(); unsubTyping(); unsubWallpaper(); };
+    }
+
     return () => { unsubStatus(); unsubTyping(); };
-  }, [recipient.uid, chatId, isBot]);
+  }, [recipient.uid, chatId, isBot, currentUser]);
 
   useEffect(() => {
     if (!editingMessage && !lightboxSrc && !showMediaSheet && !showEmojiSheet) {
@@ -601,6 +638,40 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
     }
   };
 
+  const handleWallpaperUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      e.target.value = '';
+      try {
+          const resultUrl = await compressImage(file);
+          setSelectedWallpaper(resultUrl);
+      } catch (err) {
+          console.error(err);
+      }
+  };
+
+  const applyWallpaper = async (forBoth: boolean) => {
+      if (!currentUser || !chatId || !selectedWallpaper) return;
+      
+      const updates: any = {};
+      updates[`chats/${chatId}/wallpaper/${currentUser.uid}`] = selectedWallpaper;
+      if (forBoth) {
+          updates[`chats/${chatId}/wallpaper/${recipient.uid}`] = selectedWallpaper;
+      }
+      
+      await update(ref(db), updates);
+      setShowWallpaperMenu(false);
+      setSelectedWallpaper(null);
+  };
+
+  const forwardMessage = (msg: ExtendedMessage) => {
+      // In a real app we would open a chat selector.
+      // For now, let's just copy it to the input or show a toast.
+      setInputText(`[Переслано от ${msg.senderId === currentUser?.uid ? 'Вы' : recipient.displayName}]:\n${msg.text}`);
+      setMenuOpenId(null);
+      inputRef.current?.focus();
+  };
+
   const formatTime = (timestamp: number) => {
     return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
@@ -766,6 +837,65 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
   return (
     <div className="flex flex-col h-full relative" onClick={handleBackdropClick}>
       
+      {/* Wallpaper Menu Modal */}
+      {showWallpaperMenu && (
+        <div className="fixed inset-0 z-[100] bg-black/60 flex flex-col items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setShowWallpaperMenu(false)}>
+          <div 
+            className={`w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden flex flex-col ${isDark ? 'bg-gray-900' : 'bg-white'}`}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="p-4 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center">
+              <h3 className={`font-bold text-lg ${textPrimary}`}>Обои чата</h3>
+              <button onClick={() => setShowWallpaperMenu(false)} className={`p-1 rounded-full hover:bg-black/5 ${textSecondary}`}>
+                <X size={24} />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto max-h-[60vh]">
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                {PRESET_WALLPAPERS.map((url, i) => (
+                  <div 
+                    key={i} 
+                    className={`aspect-[9/16] rounded-xl overflow-hidden cursor-pointer border-2 transition ${selectedWallpaper === url ? 'border-blue-500 scale-95' : 'border-transparent hover:scale-105'}`}
+                    onClick={() => setSelectedWallpaper(url)}
+                  >
+                    <img src={url} className="w-full h-full object-cover" />
+                  </div>
+                ))}
+                <div 
+                  className={`aspect-[9/16] rounded-xl overflow-hidden cursor-pointer border-2 border-dashed flex flex-col items-center justify-center transition ${isDark ? 'border-gray-700 hover:bg-gray-800' : 'border-gray-300 hover:bg-gray-50'} ${selectedWallpaper && !PRESET_WALLPAPERS.includes(selectedWallpaper) ? 'border-blue-500 scale-95' : 'hover:scale-105'}`}
+                  onClick={() => wallpaperInputRef.current?.click()}
+                >
+                  <ImageIcon className={textSecondary} size={32} />
+                  <span className={`text-xs mt-2 font-medium ${textSecondary}`}>Свой фон</span>
+                  {selectedWallpaper && !PRESET_WALLPAPERS.includes(selectedWallpaper) && (
+                    <img src={selectedWallpaper} className="absolute inset-0 w-full h-full object-cover opacity-50" />
+                  )}
+                </div>
+              </div>
+              
+              <input type="file" ref={wallpaperInputRef} className="hidden" accept="image/*" onChange={handleWallpaperUpload} />
+
+              {selectedWallpaper && (
+                <div className="space-y-2 mt-4 animate-in slide-in-from-bottom-2">
+                  <button 
+                    onClick={() => applyWallpaper(false)}
+                    className="w-full py-3 rounded-xl font-bold bg-blue-500 text-white hover:bg-blue-600 transition active:scale-95"
+                  >
+                    Применить у себя
+                  </button>
+                  <button 
+                    onClick={() => applyWallpaper(true)}
+                    className={`w-full py-3 rounded-xl font-bold transition active:scale-95 ${isDark ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-gray-100 text-gray-800 hover:bg-gray-200'}`}
+                  >
+                    Применить у себя и {recipient.displayName}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Lightbox */}
       {lightboxSrc && (
         <div className="fixed inset-0 z-[100] bg-black/95 flex flex-col items-center justify-center animate-in fade-in duration-200" onClick={() => setLightboxSrc(null)}>
@@ -854,10 +984,36 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
              </p>
           </div>
         </div>
+        
+        {!isBot && (
+          <div className="relative">
+            <button 
+              onClick={(e) => { e.stopPropagation(); setShowChatMenu(!showChatMenu); }}
+              className={`p-2 rounded-full transition ${isDark ? 'hover:bg-gray-800' : 'hover:bg-blue-50'}`}
+            >
+              <MoreVertical className={iconColor} size={22} />
+            </button>
+            {showChatMenu && (
+              <div className={`absolute right-0 mt-2 w-48 rounded-xl shadow-xl border z-50 overflow-hidden animate-in fade-in zoom-in duration-200 ${isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setShowChatMenu(false); setShowWallpaperMenu(true); }}
+                  className={`w-full text-left px-4 py-3 text-sm font-medium transition flex items-center gap-3 ${isDark ? 'hover:bg-gray-700 text-white' : 'hover:bg-gray-50 text-gray-800'}`}
+                >
+                  <ImageIcon size={18} />
+                  Поменять обои
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Messages Area */}
-      <div className={`flex-1 overflow-y-auto p-4 space-y-0.5 no-scrollbar ${isDark ? 'bg-gray-900' : (theme === 'newyear' ? 'bg-red-50/30' : 'bg-[#eef2f5]')}`} onClick={handleBackdropClick}>
+      <div 
+        className={`flex-1 overflow-y-auto p-4 space-y-0.5 no-scrollbar ${!chatWallpaper ? (isDark ? 'bg-gray-900' : (theme === 'newyear' ? 'bg-red-50/30' : 'bg-[#eef2f5]')) : ''}`} 
+        onClick={handleBackdropClick}
+        style={chatWallpaper ? { backgroundImage: `url(${chatWallpaper})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
+      >
         {messages.map((msg, index) => {
           const isMe = msg.senderId === currentUser?.uid;
           const isActive = activePickerId === msg.id;
@@ -947,9 +1103,15 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
                           : `px-3 py-1.5 ${borderRadiusClass} ${isMe ? `${myBubble} text-white` : `${otherBubble}`}`
                         }`}
                         onClick={(e) => {
-                            if (window.innerWidth < 768 && !isBot) {
+                            if (!isBot) {
                                 e.stopPropagation();
-                                setActivePickerId(isActive ? null : msg.id);
+                                if (isMe) {
+                                    setMenuOpenId(isMenuOpen ? null : msg.id);
+                                    setActivePickerId(null);
+                                } else {
+                                    setActivePickerId(isActive ? null : msg.id);
+                                    setMenuOpenId(null);
+                                }
                             }
                         }}
                       >
@@ -968,6 +1130,35 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
                              {isMe && (msg.read ? <CheckCheck size={12} strokeWidth={2} /> : <Check size={12} strokeWidth={2} />)}
                         </div>
                       </div>
+                      
+                      {/* Message Menu for Own Messages */}
+                      {isMenuOpen && isMe && (
+                        <div className={`absolute top-full right-0 mt-1 z-50 w-48 rounded-2xl shadow-xl border overflow-hidden animate-in fade-in zoom-in duration-200 ${isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-100'}`}>
+                          {canEdit && (
+                            <button 
+                              onClick={(e) => { e.stopPropagation(); startEditing(msg); }}
+                              className={`w-full text-left px-4 py-3 text-sm font-medium transition flex items-center gap-3 ${isDark ? 'hover:bg-gray-700 text-white' : 'hover:bg-gray-50 text-gray-800'}`}
+                            >
+                              <Edit2 size={18} className="text-blue-500" />
+                              Изменить
+                            </button>
+                          )}
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); forwardMessage(msg); }}
+                            className={`w-full text-left px-4 py-3 text-sm font-medium transition flex items-center gap-3 ${isDark ? 'hover:bg-gray-700 text-white' : 'hover:bg-gray-50 text-gray-800'}`}
+                          >
+                            <CornerDownLeft size={18} className="text-green-500" />
+                            Переслать
+                          </button>
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); deleteMessage(msg.id); }}
+                            className={`w-full text-left px-4 py-3 text-sm font-medium transition flex items-center gap-3 text-red-500 ${isDark ? 'hover:bg-gray-700' : 'hover:bg-gray-50'}`}
+                          >
+                            <Trash2 size={18} />
+                            Удалить
+                          </button>
+                        </div>
+                      )}
                       
                   </div>
                 </div>
@@ -1134,63 +1325,69 @@ const ChatRoom: React.FC<ChatRoomProps> = ({ recipient, onBack, theme }) => {
                 </div>
             )}
             
-            <div className={`flex items-end gap-2 ${inputBg} rounded-[2rem] px-1 py-1 border border-transparent transition shadow-sm ${isDark ? '' : 'border-gray-200'}`}>
-            
-            {/* Emoji Button (Left) */}
-            <button 
-                onClick={(e) => { e.stopPropagation(); setShowEmojiSheet(!showEmojiSheet); setShowMediaSheet(false); }}
-                className={`p-2.5 rounded-full transition hover:bg-gray-100 dark:hover:bg-white/10 ${showEmojiSheet ? 'text-blue-500' : textSecondary}`}
-            >
-                <Smile size={24} />
-            </button>
+            <div className="flex items-end gap-2">
+                <div className={`flex-1 flex items-end gap-2 ${inputBg} rounded-[2rem] px-1 py-1 border border-transparent transition shadow-sm ${isDark ? '' : 'border-gray-200'}`}>
+                    {/* Emoji Button */}
+                    <button 
+                        onClick={(e) => { e.stopPropagation(); setShowEmojiSheet(!showEmojiSheet); setShowMediaSheet(false); }}
+                        className={`p-2.5 rounded-full transition hover:bg-gray-100 dark:hover:bg-white/10 ${showEmojiSheet ? 'text-blue-500' : textSecondary}`}
+                    >
+                        <Smile size={24} />
+                    </button>
 
-            {/* Attachment Button (Moved Left) */}
-            <button 
-                onClick={(e) => { e.stopPropagation(); setShowMediaSheet(!showMediaSheet); setShowEmojiSheet(false); }}
-                className={`p-2.5 rounded-full transition hover:bg-gray-100 dark:hover:bg-white/10 transform rotate-45 ${showMediaSheet ? 'text-blue-500' : textSecondary}`}
-            >
-                <Paperclip size={24} />
-            </button>
+                    <input
+                        ref={inputRef}
+                        type="text"
+                        value={inputText}
+                        onChange={handleInputChange}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                        onFocus={() => { setShowMediaSheet(false); setShowEmojiSheet(false); }}
+                        placeholder={isRecording ? `Запись... ${recordingTime}s` : "Сообщение"}
+                        className="flex-1 bg-transparent focus:outline-none min-h-[44px] py-2.5 max-h-32 text-[16px]"
+                        disabled={isRecording}
+                    />
 
-            <input
-                ref={inputRef}
-                type="text"
-                value={inputText}
-                onChange={handleInputChange}
-                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                onFocus={() => { setShowMediaSheet(false); setShowEmojiSheet(false); }}
-                placeholder={isRecording ? `Запись... ${recordingTime}s` : "Сообщение"}
-                className="flex-1 bg-transparent focus:outline-none min-h-[44px] py-2.5 max-h-32 text-[16px]"
-                disabled={isRecording}
-            />
+                    {/* Recording Indicator */}
+                    {isRecording && (
+                        <div className="flex items-center gap-2 animate-pulse text-red-500 mr-2">
+                            <div className="w-2 h-2 rounded-full bg-red-500"></div>
+                        </div>
+                    )}
 
-            {!inputText.trim() && !isRecording && (
-                <button 
-                    onClick={startRecording}
-                    className={`p-2.5 rounded-full transition hover:bg-gray-100 dark:hover:bg-white/10 ${textSecondary}`}
-                >
-                    <Mic size={24} />
-                </button>
-            )}
+                    {/* Cancel Recording Button */}
+                    {isRecording && (
+                        <button onClick={cancelRecording} className="p-2 text-red-500 hover:bg-red-50 rounded-full"><Trash2 size={24} /></button>
+                    )}
 
-            {isRecording && (
-                <div className="flex items-center gap-2 animate-pulse text-red-500 mr-2">
-                    <div className="w-2 h-2 rounded-full bg-red-500"></div>
+                    {/* Attachment Button (Only if not recording) */}
+                    {!isRecording && (
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); setShowMediaSheet(!showMediaSheet); setShowEmojiSheet(false); }}
+                            className={`p-2.5 rounded-full transition hover:bg-gray-100 dark:hover:bg-white/10 transform rotate-45 ${showMediaSheet ? 'text-blue-500' : textSecondary}`}
+                        >
+                            <Paperclip size={24} />
+                        </button>
+                    )}
                 </div>
-            )}
 
-            {(inputText.trim() || isRecording) && (
-                <button
-                onClick={isRecording ? stopRecording : handleSend}
-                className={`p-2.5 rounded-full mb-0.5 animate-in zoom-in duration-200 text-blue-500 hover:bg-blue-50`}
-                >
-                {isRecording ? <Send size={24} className="ml-0.5" /> : (editingMessage ? <Check size={24} /> : <Send size={24} />)}
-                </button>
-            )}
-
-            {isRecording && (
-                <button onClick={cancelRecording} className="p-2 text-red-500 hover:bg-red-50 rounded-full"><Trash2 size={24} /></button>
-            )}
+                {/* Mic / Send Button (Outside) */}
+                <div className="flex items-center justify-center mb-1">
+                     {(inputText.trim() || isRecording) ? (
+                        <button
+                            onClick={isRecording ? stopRecording : handleSend}
+                            className={`w-12 h-12 rounded-full flex items-center justify-center shadow-md transition active:scale-90 ${theme === 'newyear' ? 'bg-red-600 text-white' : (isDark ? 'bg-purple-600 text-white' : 'bg-blue-500 text-white')}`}
+                        >
+                            {isRecording ? <Send size={24} className="ml-1" /> : (editingMessage ? <Check size={24} /> : <Send size={24} className="ml-1" />)}
+                        </button>
+                     ) : (
+                        <button 
+                            onClick={startRecording}
+                            className={`w-12 h-12 rounded-full flex items-center justify-center shadow-md transition active:scale-90 ${isDark ? 'bg-gray-800 text-gray-400' : 'bg-gray-100 text-gray-500'}`}
+                        >
+                            <Mic size={24} />
+                        </button>
+                     )}
+                </div>
             </div>
         </div>
       )}

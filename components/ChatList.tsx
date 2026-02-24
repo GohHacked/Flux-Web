@@ -100,7 +100,7 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
       const newsBotChat: ChatSessionExtended = {
         chatId: 'official_news_channel',
         participants: [currentUser.uid, FLUX_BOT_ID],
-        lastMessage: 'Добро пожаловать в Flux Web!',
+        lastMessage: '🚀 Обновление Flux Web 0.2!',
         timestamp: Date.now() + 20000, 
         recipientUser: newsBotUser,
         isTyping: false

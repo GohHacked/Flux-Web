@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../firebase';
 import { updateProfile } from 'firebase/auth';
 import { ref, update, get, child } from 'firebase/database';
-import { LogOut, Edit2, Moon, Sun, Snowflake, Palette, ArrowLeft, ChevronRight, Camera, Upload, Share2, Check } from 'lucide-react';
+import { LogOut, Edit2, Moon, Sun, Snowflake, Palette, ArrowLeft, ChevronRight, Camera, Upload, Share2, Check, Shield, Lock, Fingerprint, EyeOff, KeyRound } from 'lucide-react';
 import { UserProfile, Theme } from '../types';
 
 interface SettingsProps {
@@ -12,7 +12,7 @@ interface SettingsProps {
 }
 
 const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
-  const [activeSection, setActiveSection] = useState<'main' | 'profile' | 'themes'>('main');
+  const [activeSection, setActiveSection] = useState<'main' | 'profile' | 'themes' | 'security'>('main');
   
   // Profile State
   const [displayName, setDisplayName] = useState(auth.currentUser?.displayName || '');
@@ -21,6 +21,14 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
   const [bio, setBio] = useState('');
   const [photoURL, setPhotoURL] = useState(auth.currentUser?.photoURL || '');
   
+  // Security State
+  const [pinCode, setPinCode] = useState('');
+  const [isPinEnabled, setIsPinEnabled] = useState(false);
+  const [showPinSetup, setShowPinSetup] = useState(false);
+  const [pinStep, setPinStep] = useState<'create' | 'confirm'>('create');
+  const [tempPin, setTempPin] = useState('');
+  const [pinError, setPinError] = useState('');
+
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -115,6 +123,11 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
          }
       };
       fetchUserData();
+      
+      const savedPin = localStorage.getItem(`flux_pin_${currentUser.uid}`);
+      if (savedPin) {
+          setIsPinEnabled(true);
+      }
     }
   }, [currentUser]);
 
@@ -227,7 +240,7 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
   };
 
   const handleInvite = async () => {
-      const url = window.location.origin;
+      const url = 'https://flux-web-six.vercel.app';
       const shareData = {
           title: 'Flux Web',
           text: 'Привет! Присоединяйся ко мне в мессенджере Flux Web: ',
@@ -249,6 +262,52 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
              setMessage('Не удалось скопировать ссылку');
           }
       }
+  };
+
+  const handlePinInput = (digit: string) => {
+      if (pinCode.length < 4) {
+          setPinCode(prev => prev + digit);
+          setPinError('');
+      }
+  };
+
+  const handlePinDelete = () => {
+      setPinCode(prev => prev.slice(0, -1));
+      setPinError('');
+  };
+
+  useEffect(() => {
+      if (pinCode.length === 4) {
+          if (pinStep === 'create') {
+              setTempPin(pinCode);
+              setPinCode('');
+              setPinStep('confirm');
+          } else if (pinStep === 'confirm') {
+              if (pinCode === tempPin) {
+                  // Save PIN
+                  localStorage.setItem(`flux_pin_${currentUser?.uid}`, pinCode);
+                  setIsPinEnabled(true);
+                  setShowPinSetup(false);
+                  setPinCode('');
+                  setTempPin('');
+                  setPinStep('create');
+                  setMessage('Защита успешно установлена!');
+                  setTimeout(() => setMessage(''), 3000);
+              } else {
+                  setPinError('Коды не совпадают. Попробуйте снова.');
+                  setPinCode('');
+                  setTempPin('');
+                  setPinStep('create');
+              }
+          }
+      }
+  }, [pinCode, pinStep, tempPin, currentUser?.uid]);
+
+  const removePin = () => {
+      localStorage.removeItem(`flux_pin_${currentUser?.uid}`);
+      setIsPinEnabled(false);
+      setMessage('Защита отключена');
+      setTimeout(() => setMessage(''), 3000);
   };
 
   // RENDER: Profile Editor
@@ -480,6 +539,125 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
     );
   }
 
+  // RENDER: Security
+  if (activeSection === 'security') {
+      return (
+        <div className={`h-full flex flex-col p-6 overflow-y-auto ${mainBg}`}>
+           <div className="flex items-center gap-2 mb-6">
+              <button 
+                onClick={() => setActiveSection('main')}
+                className={`p-2 -ml-2 rounded-full hover:bg-black/5 transition ${textPrimary}`}
+              >
+                <ArrowLeft size={24} />
+              </button>
+              <h2 className={`text-2xl font-bold ${textPrimary}`}>Безопасность</h2>
+           </div>
+
+           <div className="flex flex-col items-center justify-center py-8">
+               <div className={`w-24 h-24 rounded-full flex items-center justify-center mb-6 shadow-xl ${isDark ? 'bg-gray-800 text-blue-400' : 'bg-blue-100 text-blue-600'}`}>
+                   <Shield size={48} />
+               </div>
+               <h3 className={`text-xl font-bold mb-2 ${textPrimary}`}>Защита приложения</h3>
+               <p className={`text-center text-sm px-4 mb-8 ${textSecondary}`}>
+                   Установите PIN-код для входа в приложение. Это защитит ваши переписки от посторонних глаз.
+               </p>
+
+               {isPinEnabled ? (
+                   <div className="w-full space-y-4">
+                       <div className={`p-4 rounded-2xl flex items-center justify-between border ${isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'}`}>
+                           <div className="flex items-center gap-3">
+                               <div className="p-2 bg-green-100 text-green-600 rounded-full">
+                                   <Lock size={20} />
+                               </div>
+                               <div>
+                                   <p className={`font-bold ${textPrimary}`}>PIN-код включен</p>
+                                   <p className={`text-xs ${textSecondary}`}>Приложение защищено</p>
+                               </div>
+                           </div>
+                           <Check className="text-green-500" />
+                       </div>
+                       <button 
+                           onClick={removePin}
+                           className="w-full py-4 rounded-xl font-bold text-red-500 bg-red-500/10 hover:bg-red-500/20 transition active:scale-95"
+                       >
+                           Отключить защиту
+                       </button>
+                   </div>
+               ) : (
+                   <button 
+                       onClick={() => setShowPinSetup(true)}
+                       className={`w-full py-4 rounded-xl font-bold flex items-center justify-center gap-2 transition active:scale-95 ${accentColor}`}
+                   >
+                       <KeyRound size={20} />
+                       Установить PIN-код
+                   </button>
+               )}
+           </div>
+
+           {/* PIN Setup Modal */}
+           {showPinSetup && (
+               <div className="fixed inset-0 z-50 bg-black/80 flex flex-col items-center justify-center p-4 animate-in fade-in duration-200">
+                   <div className={`w-full max-w-sm p-6 rounded-3xl shadow-2xl flex flex-col items-center ${isDark ? 'bg-gray-900' : 'bg-white'}`}>
+                       <h3 className={`text-xl font-bold mb-2 ${textPrimary}`}>
+                           {pinStep === 'create' ? 'Придумайте PIN-код' : 'Повторите PIN-код'}
+                       </h3>
+                       <p className={`text-sm mb-8 text-center ${pinError ? 'text-red-500' : textSecondary}`}>
+                           {pinError || 'Введите 4 цифры'}
+                       </p>
+
+                       <div className="flex gap-4 mb-8">
+                           {[0, 1, 2, 3].map(i => (
+                               <div 
+                                   key={i} 
+                                   className={`w-4 h-4 rounded-full transition-all duration-200 ${pinCode.length > i ? 'bg-blue-500 scale-110' : (isDark ? 'bg-gray-700' : 'bg-gray-200')}`}
+                               />
+                           ))}
+                       </div>
+
+                       <div className="grid grid-cols-3 gap-4 w-full max-w-[240px]">
+                           {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
+                               <button 
+                                   key={num}
+                                   onClick={() => handlePinInput(num.toString())}
+                                   className={`aspect-square rounded-full text-2xl font-bold flex items-center justify-center transition active:scale-90 ${isDark ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-gray-100 text-gray-900 hover:bg-gray-200'}`}
+                               >
+                                   {num}
+                               </button>
+                           ))}
+                           <div className="aspect-square"></div>
+                           <button 
+                               onClick={() => handlePinInput('0')}
+                               className={`aspect-square rounded-full text-2xl font-bold flex items-center justify-center transition active:scale-90 ${isDark ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-gray-100 text-gray-900 hover:bg-gray-200'}`}
+                           >
+                               0
+                           </button>
+                           <button 
+                               onClick={handlePinDelete}
+                               className={`aspect-square rounded-full text-2xl font-bold flex items-center justify-center transition active:scale-90 ${isDark ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-gray-100 text-gray-900 hover:bg-gray-200'}`}
+                           >
+                               <ArrowLeft size={24} />
+                           </button>
+                       </div>
+
+                       <button 
+                           onClick={() => {
+                               setShowPinSetup(false);
+                               setPinCode('');
+                               setTempPin('');
+                               setPinStep('create');
+                               setPinError('');
+                           }}
+                           className={`mt-8 px-6 py-2 rounded-full text-sm font-bold ${textSecondary} hover:bg-black/5 transition`}
+                       >
+                           Отмена
+                       </button>
+                   </div>
+               </div>
+           )}
+        </div>
+      );
+  }
+
   // RENDER: Main Menu
   return (
     <div className={`h-full p-6 flex flex-col overflow-y-auto ${mainBg}`}>
@@ -527,6 +705,20 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
          </button>
 
          <button 
+           onClick={() => setActiveSection('security')}
+           className={`w-full ${bgCard} p-4 rounded-2xl flex items-center gap-4 text-left hover:brightness-105 transition group ${isNewYear ? 'hover:bg-white/20' : ''}`}
+         >
+           <div className={`p-3 rounded-full transition group-hover:scale-110 ${theme === 'newyear' ? 'bg-blue-100 text-blue-600' : (isDark ? 'bg-gray-700 text-blue-400' : 'bg-blue-100 text-blue-600')} ${isNewYear ? '!bg-white !text-blue-600 shadow-lg' : ''}`}>
+             <Shield size={24} />
+           </div>
+           <div className="flex-1">
+             <span className={`text-base font-bold block ${textPrimary}`}>Безопасность</span>
+             <span className={`text-xs ${textSecondary}`}>Защита приложения, PIN-код</span>
+           </div>
+           <ChevronRight className={`${isNewYear ? 'text-white/70' : 'text-gray-400 opacity-50'}`} size={20} />
+         </button>
+
+         <button 
            onClick={handleInvite}
            className={`w-full ${bgCard} p-4 rounded-2xl flex items-center gap-4 text-left hover:brightness-105 transition group ${isNewYear ? 'hover:bg-white/20' : ''}`}
          >
@@ -547,7 +739,7 @@ const Settings: React.FC<SettingsProps> = ({ onLogout, theme, setTheme }) => {
 
        <div className="text-center mb-8">
           <p className={`font-bold text-lg ${textPrimary}`}>Flux Web</p>
-          <p className={`${textSecondary} text-sm`}>Версия 0.1</p>
+          <p className={`${textSecondary} text-sm`}>Версия 0.2</p>
        </div>
 
        <button 

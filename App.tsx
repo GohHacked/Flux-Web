@@ -7,7 +7,7 @@ import ChatList from './components/ChatList';
 import ChatRoom from './components/ChatRoom';
 import Settings from './components/Settings';
 import { UserProfile, AppView, Theme } from './types';
-import { MessageCircle, Settings as SettingsIcon, Zap, Snowflake } from 'lucide-react';
+import { MessageCircle, Settings as SettingsIcon, Zap, Snowflake, Lock, ArrowLeft } from 'lucide-react';
 
 // Lightweight Snowfall Component for Global Usage
 const GlobalSnowfall = () => {
@@ -58,11 +58,24 @@ const App: React.FC = () => {
     return (localStorage.getItem('flux_theme') as Theme) || 'light';
   });
 
+  // Security State
+  const [isLocked, setIsLocked] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState(false);
+
   // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setTimeout(() => {
         setUser(currentUser);
+        if (currentUser) {
+            const savedPin = localStorage.getItem(`flux_pin_${currentUser.uid}`);
+            if (savedPin) {
+                setIsLocked(true);
+            }
+        } else {
+            setIsLocked(false);
+        }
         setLoading(false);
       }, 800);
     });
@@ -121,6 +134,33 @@ const App: React.FC = () => {
     setCurrentView('chat_room');
   };
 
+  const handlePinUnlock = (digit: string) => {
+      if (pinInput.length < 4) {
+          const newPin = pinInput + digit;
+          setPinInput(newPin);
+          setPinError(false);
+          
+          if (newPin.length === 4) {
+              const savedPin = localStorage.getItem(`flux_pin_${user?.uid}`);
+              if (newPin === savedPin) {
+                  setIsLocked(false);
+                  setPinInput('');
+              } else {
+                  setPinError(true);
+                  setTimeout(() => {
+                      setPinInput('');
+                      setPinError(false);
+                  }, 500);
+              }
+          }
+      }
+  };
+
+  const handlePinDelete = () => {
+      setPinInput(prev => prev.slice(0, -1));
+      setPinError(false);
+  };
+
   // Global Background Logic
   const getMainBg = () => {
     if (theme === 'dark') return 'bg-gray-900';
@@ -177,6 +217,63 @@ const App: React.FC = () => {
 
   if (!user) {
     return <Auth onLogin={() => {}} />;
+  }
+
+  if (isLocked) {
+      return (
+          <div className={`h-screen w-screen flex flex-col items-center justify-center ${getMainBg()} transition-colors duration-500`}>
+              <div className={`w-full max-w-sm p-8 rounded-3xl shadow-2xl flex flex-col items-center ${isDark ? 'bg-gray-900' : 'bg-white'} animate-in zoom-in duration-300`}>
+                  <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-6 ${isDark ? 'bg-gray-800 text-blue-400' : 'bg-blue-100 text-blue-600'}`}>
+                      <Lock size={32} />
+                  </div>
+                  <h2 className={`text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Введите PIN-код</h2>
+                  <p className={`text-sm mb-8 ${pinError ? 'text-red-500 animate-bounce' : (isDark ? 'text-gray-400' : 'text-gray-500')}`}>
+                      {pinError ? 'Неверный PIN-код' : 'Приложение защищено'}
+                  </p>
+
+                  <div className="flex gap-4 mb-8">
+                      {[0, 1, 2, 3].map(i => (
+                          <div 
+                              key={i} 
+                              className={`w-4 h-4 rounded-full transition-all duration-200 ${pinInput.length > i ? (pinError ? 'bg-red-500 scale-110' : 'bg-blue-500 scale-110') : (isDark ? 'bg-gray-700' : 'bg-gray-200')}`}
+                          />
+                      ))}
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-4 w-full max-w-[240px]">
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
+                          <button 
+                              key={num}
+                              onClick={() => handlePinUnlock(num.toString())}
+                              className={`aspect-square rounded-full text-2xl font-bold flex items-center justify-center transition active:scale-90 ${isDark ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-gray-100 text-gray-900 hover:bg-gray-200'}`}
+                          >
+                              {num}
+                          </button>
+                      ))}
+                      <div className="aspect-square"></div>
+                      <button 
+                          onClick={() => handlePinUnlock('0')}
+                          className={`aspect-square rounded-full text-2xl font-bold flex items-center justify-center transition active:scale-90 ${isDark ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-gray-100 text-gray-900 hover:bg-gray-200'}`}
+                      >
+                          0
+                      </button>
+                      <button 
+                          onClick={handlePinDelete}
+                          className={`aspect-square rounded-full text-2xl font-bold flex items-center justify-center transition active:scale-90 ${isDark ? 'bg-gray-800 text-white hover:bg-gray-700' : 'bg-gray-100 text-gray-900 hover:bg-gray-200'}`}
+                      >
+                          <ArrowLeft size={24} />
+                      </button>
+                  </div>
+                  
+                  <button 
+                      onClick={handleLogout}
+                      className={`mt-8 text-sm font-bold ${isDark ? 'text-gray-500 hover:text-white' : 'text-gray-400 hover:text-gray-800'} transition`}
+                  >
+                      Выйти из аккаунта
+                  </button>
+              </div>
+          </div>
+      );
   }
 
   return (

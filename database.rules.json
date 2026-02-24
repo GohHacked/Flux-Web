@@ -1,12 +1,36 @@
 {
   "rules": {
-    ".read": true,
-    ".write": true,
+    ".read": "auth != null",
+    ".write": "auth != null",
     "users": {
+      "$uid": {
+        ".write": "$uid === auth.uid"
+      },
       ".indexOn": ["username"]
     },
     "usernames": {
-      ".indexOn": [".value"]
+      ".indexOn": [".value"],
+      // Usernames can be created but not overwritten by others
+      "$username": {
+        ".write": "!data.exists() || data.val() === auth.uid"
+      }
+    },
+    "chats": {
+      "$chatId": {
+        // Ideally, check if auth.uid is in participants, but for this structure:
+        ".write": "auth != null" 
+      }
+    },
+    "messages": {
+      "$chatId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
+    "status": {
+      "$uid": {
+        ".write": "$uid === auth.uid"
+      }
     }
   }
 }

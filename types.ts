@@ -1,3 +1,4 @@
+
 export interface UserProfile {
   uid: string;
   email: string;
@@ -5,6 +6,8 @@ export interface UserProfile {
   displayName: string; // Nickname
   photoURL: string;
   bio?: string; // Description/About info
+  isRestricted?: boolean; // Spam restriction status
+  restrictedUntil?: number; // Timestamp
 }
 
 export interface UserStatus {
@@ -18,6 +21,12 @@ export interface Message {
   text: string;
   timestamp: number;
   reactions?: Record<string, string>; // UID -> Emoji char
+  isEdited?: boolean;
+  replyTo?: {
+    id: string;
+    text: string;
+    senderName: string;
+  };
 }
 
 export interface ChatSession {
@@ -30,4 +39,4 @@ export interface ChatSession {
 
 export type AppView = 'auth' | 'chats' | 'settings' | 'chat_room';
 
-export type Theme = 'light' | 'dark' | 'newyear';
+export type Theme = 'light' | 'dark' | 'newyear' | 'forest' | 'neon' | 'moscow' | 'lebedev' | 'simple';

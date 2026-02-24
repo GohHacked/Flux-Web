@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db, auth } from '../firebase';
 import { ref, onValue, get } from 'firebase/database';
 import { UserProfile, ChatSession, Theme } from '../types';
-import { Search, MessageSquare, Loader2 } from 'lucide-react';
+import { Search, MessageSquare, Loader2, Snowflake, Zap, BadgeCheck, Bot } from 'lucide-react';
 
 interface ChatListProps {
   onSelectChat: (recipient: UserProfile) => void;
@@ -12,6 +12,9 @@ interface ChatListProps {
 interface ChatSessionExtended extends ChatSession {
   isTyping?: boolean;
 }
+
+const FLUX_BOT_ID = 'flux_bot_official';
+const SPAM_BOT_ID = 'flux_spam_bot';
 
 const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
   const [chats, setChats] = useState<ChatSessionExtended[]>([]);
@@ -29,21 +32,34 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
 
   // Theme Config
   const isDark = theme === 'dark';
+  const isNewYear = theme === 'newyear';
   
-  // Header Styles - Minimalist
-  const headerBg = isDark ? 'bg-gray-900/90 border-b border-gray-800' : 'bg-white/80 border-b border-blue-50';
-  const titleColor = theme === 'newyear' ? 'text-red-600' : (isDark ? 'text-white' : 'text-blue-600');
+  // Header Styles
+  const headerBg = isNewYear 
+      ? 'bg-transparent' 
+      : (isDark ? 'bg-gray-900/90 border-b border-gray-800' : 'bg-white/80 border-b border-blue-50');
+  
+  const titleColor = isNewYear ? 'text-white drop-shadow-sm' : (isDark ? 'text-white' : 'text-blue-600');
   
   // Search Input Styles
-  const inputContainerBg = isDark ? 'bg-gray-800' : 'bg-gray-100';
-  const inputText = isDark ? 'text-gray-200 placeholder-gray-500' : 'text-gray-800 placeholder-gray-400';
-  const searchIconColor = isDark ? 'text-gray-500' : 'text-gray-400';
+  const inputContainerBg = isNewYear 
+      ? 'bg-black/20 border border-white/10 backdrop-blur-sm' 
+      : (isDark ? 'bg-gray-800' : 'bg-gray-100');
+  
+  const inputText = isNewYear || isDark 
+      ? 'text-white placeholder-white/50' 
+      : 'text-gray-800 placeholder-gray-400';
+  
+  const searchIconColor = isNewYear ? 'text-white/60' : (isDark ? 'text-gray-500' : 'text-gray-400');
 
   // Card Styles
-  const cardBg = isDark ? 'bg-gray-800' : 'bg-white';
-  const textPrimary = isDark ? 'text-white' : 'text-gray-900';
-  const textSecondary = isDark ? 'text-gray-400' : 'text-gray-500';
-  const accentText = theme === 'newyear' ? 'text-red-500' : (isDark ? 'text-purple-400' : 'text-blue-500');
+  const cardBg = isNewYear 
+      ? 'bg-white/10 backdrop-blur-md border border-white/5 hover:bg-white/15' 
+      : (isDark ? 'bg-gray-800' : 'bg-white');
+      
+  const textPrimary = isNewYear || isDark ? 'text-white' : 'text-gray-900';
+  const textSecondary = isNewYear ? 'text-red-100/70' : (isDark ? 'text-gray-400' : 'text-gray-500');
+  const accentText = isNewYear ? 'text-red-200 font-bold' : (isDark ? 'text-purple-400' : 'text-blue-500');
 
   // Request Notification Permission
   useEffect(() => {
@@ -70,6 +86,48 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
       const loadedChats: ChatSessionExtended[] = [];
       const now = Date.now();
 
+      // --- INJECT OFFICIAL BOTS ---
+      
+      // 1. News Bot
+      const newsBotUser: UserProfile = {
+        uid: FLUX_BOT_ID,
+        displayName: 'Flux Bot',
+        username: 'flux_news_bot',
+        email: 'news@flux.web',
+        photoURL: 'flux_logo_zap', 
+        bio: 'Официальный бот новостей Flux Web.'
+      };
+      const newsBotChat: ChatSessionExtended = {
+        chatId: 'official_news_channel',
+        participants: [currentUser.uid, FLUX_BOT_ID],
+        lastMessage: 'Добро пожаловать в Flux Web!',
+        timestamp: Date.now() + 20000, 
+        recipientUser: newsBotUser,
+        isTyping: false
+      };
+      loadedChats.push(newsBotChat);
+
+      // 2. Spam Info Bot
+      const spamBotUser: UserProfile = {
+        uid: SPAM_BOT_ID,
+        displayName: 'Spam Info Bot',
+        username: 'spambot',
+        email: 'spam@flux.web',
+        photoURL: 'flux_spam_bot_img',
+        bio: 'Бот для проверки ограничений аккаунта.'
+      };
+      const spamBotChat: ChatSessionExtended = {
+        chatId: 'official_spam_channel',
+        participants: [currentUser.uid, SPAM_BOT_ID],
+        lastMessage: 'Нажмите /start для проверки',
+        timestamp: Date.now() + 15000,
+        recipientUser: spamBotUser,
+        isTyping: false
+      };
+      loadedChats.push(spamBotChat);
+
+      // -------------------------------
+
       if (data) {
         // Iterate through all chats
         for (const [key, value] of Object.entries(data)) {
@@ -77,7 +135,7 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
           if (chatData.participants && chatData.participants.includes(currentUser.uid)) {
             const otherUid = chatData.participants.find((uid: string) => uid !== currentUser.uid);
             
-            if (otherUid) {
+            if (otherUid && otherUid !== FLUX_BOT_ID && otherUid !== SPAM_BOT_ID) {
                // Check typing status
                let isTyping = false;
                if (chatData.typing && chatData.typing[otherUid]) {
@@ -104,7 +162,9 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
           }
         }
       }
+      // Sort by timestamp desc
       loadedChats.sort((a, b) => b.timestamp - a.timestamp);
+      
       setChats(loadedChats);
       setLoading(false);
       
@@ -121,6 +181,9 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
     const unsubs: (() => void)[] = [];
 
     chats.forEach(chat => {
+      // Skip listener for fake bots
+      if (chat.chatId === 'official_news_channel' || chat.chatId === 'official_spam_channel') return; 
+
       const messagesRef = ref(db, `messages/${chat.chatId}`);
       
       const unsub = onValue(messagesRef, (snapshot) => {
@@ -215,14 +278,38 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
     return (
       <div className="flex items-center gap-2">
         <span>Flux Web</span>
-        {theme === 'newyear' && <span>🎄</span>}
+        {isNewYear && <Snowflake size={18} className="animate-spin-slow" />}
       </div>
     );
   };
 
+  const renderAvatar = (user: UserProfile) => {
+    if (user.uid === FLUX_BOT_ID || user.photoURL === 'flux_logo_zap') {
+       return (
+         <div className={`w-14 h-14 rounded-full flex items-center justify-center bg-gradient-to-br from-purple-500 to-indigo-600 text-white shadow-lg ${isNewYear ? 'ring-2 ring-white/20' : ''}`}>
+             <Zap size={28} fill="currentColor" />
+         </div>
+       );
+    }
+    if (user.uid === SPAM_BOT_ID || user.photoURL === 'flux_spam_bot_img') {
+        return (
+          <div className={`w-14 h-14 rounded-full flex items-center justify-center bg-gradient-to-br from-emerald-400 to-emerald-600 text-white shadow-lg ${isNewYear ? 'ring-2 ring-white/20' : ''}`}>
+              <Bot size={28} />
+          </div>
+        );
+     }
+    return (
+      <img
+        src={user.photoURL}
+        alt="Avatar"
+        className={`w-14 h-14 rounded-full bg-gray-200 object-cover ${isNewYear ? 'ring-2 ring-white/20' : ''}`}
+      />
+    );
+  };
+
   return (
-    <div className="flex flex-col h-full">
-      {/* Header - Clean & Modern */}
+    <div className={`flex flex-col h-full ${isNewYear ? 'bg-transparent' : ''}`}>
+      {/* Header */}
       <div className={`${headerBg} backdrop-blur-md px-4 pt-4 pb-3 z-10 transition-colors duration-300`}>
         <div className="flex justify-between items-center mb-3 px-1 h-8">
            <h1 className={`text-2xl font-bold tracking-tight ${titleColor}`}>
@@ -236,9 +323,9 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
             value={searchTerm}
             onChange={(e) => handleSearch(e.target.value)}
             placeholder="Поиск"
-            className={`w-full pl-10 pr-4 py-2.5 rounded-xl text-sm font-medium focus:outline-none transition-all ${inputContainerBg} ${inputText} focus:ring-2 ${isDark ? 'focus:ring-gray-700' : 'focus:ring-blue-100'}`}
+            className={`w-full pl-10 pr-4 py-2.5 rounded-xl text-sm font-medium focus:outline-none transition-all ${inputContainerBg} ${inputText} focus:ring-2 ${isNewYear ? 'focus:ring-white/30' : (isDark ? 'focus:ring-gray-700' : 'focus:ring-blue-100')}`}
           />
-          <Search className={`absolute left-3 top-2.5 ${searchIconColor} transition group-focus-within:text-blue-500`} size={18} />
+          <Search className={`absolute left-3 top-2.5 ${searchIconColor} transition group-focus-within:text-current`} size={18} />
         </div>
       </div>
 
@@ -256,10 +343,10 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
                    onClick={() => onSelectChat(user)}
                    className={`flex items-center gap-3 ${cardBg} p-3 rounded-xl mb-2 cursor-pointer transition hover:bg-opacity-80 active:scale-[0.98]`}
                  >
-                    <img src={user.photoURL} alt={user.username} className="w-12 h-12 rounded-full bg-gray-200 object-cover" />
+                    {renderAvatar(user)}
                     <div>
                       <p className={`font-semibold text-sm ${textPrimary}`}>{user.displayName}</p>
-                      <p className={`text-xs ${accentText}`}>@{user.username}</p>
+                      <p className={`text-xs ${isNewYear ? 'text-red-200' : 'text-blue-500'}`}>@{user.username}</p>
                     </div>
                  </div>
                ))
@@ -279,25 +366,33 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
              ) : (
                chats.map((chat) => {
                  const unreadCount = unreadCounts[chat.chatId] || 0;
+                 const isNewsBot = chat.recipientUser?.uid === FLUX_BOT_ID;
+                 const isSpamBot = chat.recipientUser?.uid === SPAM_BOT_ID;
+                 const isOfficial = isNewsBot || isSpamBot;
+                 
                  return (
                    <div
                      key={chat.chatId}
                      onClick={() => chat.recipientUser && onSelectChat(chat.recipientUser)}
-                     className={`flex items-center gap-3 ${cardBg} p-3 mx-1 rounded-xl cursor-pointer hover:bg-black/5 dark:hover:bg-white/5 transition active:scale-[0.99] group`}
+                     className={`flex items-center gap-3 ${cardBg} p-3 mx-1 rounded-xl cursor-pointer transition active:scale-[0.99] group shadow-sm ${isNewsBot ? 'border-l-4 border-l-purple-500' : (isSpamBot ? 'border-l-4 border-l-emerald-500' : '')}`}
                    >
                       <div className="relative">
-                        <img
-                          src={chat.recipientUser?.photoURL}
-                          alt="Avatar"
-                          className="w-14 h-14 rounded-full bg-gray-200 object-cover"
-                        />
+                        {renderAvatar(chat.recipientUser!)}
+                        {isOfficial && (
+                             <div className="absolute -bottom-1 -right-1 bg-blue-500 text-white p-0.5 rounded-full border-2 border-white">
+                                <BadgeCheck size={12} fill="currentColor" className="text-white" />
+                             </div>
+                        )}
                       </div>
                       
                       {/* Flex container for content with proper overflow handling */}
                       <div className="flex-1 min-w-0 pr-1">
                         <div className="flex justify-between items-center mb-0.5 gap-2">
-                          <h3 className={`font-semibold text-base truncate flex-1 min-w-0 ${textPrimary}`}>{chat.recipientUser?.displayName}</h3>
-                          <span className={`text-[11px] whitespace-nowrap flex-shrink-0 ${unreadCount > 0 ? 'text-blue-500 font-medium' : textSecondary}`}>
+                          <div className="flex items-center gap-1 min-w-0">
+                              <h3 className={`font-semibold text-base truncate ${textPrimary}`}>{chat.recipientUser?.displayName}</h3>
+                              {isOfficial && <BadgeCheck size={14} className="text-blue-500 flex-shrink-0" fill="currentColor" stroke="white" />}
+                          </div>
+                          <span className={`text-[11px] whitespace-nowrap flex-shrink-0 ${unreadCount > 0 ? (isNewYear ? 'text-white font-bold' : 'text-blue-500 font-medium') : textSecondary}`}>
                              {new Date(chat.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                           </span>
                         </div>
@@ -308,7 +403,7 @@ const ChatList: React.FC<ChatListProps> = ({ onSelectChat, theme }) => {
                             </p>
 
                             {unreadCount > 0 && (
-                                <div className={`flex-shrink-0 min-w-[20px] h-5 px-1.5 rounded-full flex items-center justify-center text-[11px] font-bold text-white animate-in zoom-in duration-300 ${theme === 'newyear' ? 'bg-red-500' : (isDark ? 'bg-purple-600' : 'bg-blue-500')}`}>
+                                <div className={`flex-shrink-0 min-w-[20px] h-5 px-1.5 rounded-full flex items-center justify-center text-[11px] font-bold text-white animate-in zoom-in duration-300 ${isNewYear ? 'bg-white text-red-700 shadow-md' : (isDark ? 'bg-purple-600' : 'bg-blue-500')}`}>
                                     {unreadCount}
                                 </div>
                             )}
